@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s')
+logging.basicConfig(level=logging.CRITICAL, format='%(asctime)s [%(levelname)s] %(message)s')
 
 # Load environment variables
 load_dotenv()
@@ -321,6 +321,38 @@ def chat_loop(chatbot):
     except KeyboardInterrupt:
         logging.info("Chat loop interrupted by user.")
         print("\n\nChat interrupted by user. Goodbye!")
+
+def semantic_search_query(query: str, top_k: int = 10):
+    """
+    A simple helper that:
+    1. Instantiates our GameKnowledgeBase and GameChatbot
+    2. Performs a semantic search for 'query' via chatbot.search_games()
+    3. Returns a list of dictionaries with the top matches
+    """
+    kb = GameKnowledgeBase()
+    chatbot = GameChatbot(kb)
+
+    pinecone_results = chatbot.search_games(query, top_k=top_k)
+
+    results = []
+    for match in pinecone_results:
+        meta = match.metadata
+        appid = meta.get('appid')
+        name = meta.get('name')
+        ai_summary = meta.get('ai_summary', '')
+        score = match.score  # similarity
+        
+        results.append({
+            "appid": appid,
+            "name": name,
+            "ai_summary": ai_summary,
+            "similarity_score": score
+        })
+
+    # Sort by descending similarity score
+    results.sort(key=lambda x: x["similarity_score"], reverse=True)
+    return results
+
 
 def main():
     logging.info("Starting main program")
