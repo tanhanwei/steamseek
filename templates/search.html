@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Search Games{% endblock %}
+
+{% block content %}
+  <h1>Search Games</h1>
+  <form method="post" action="{{ url_for('search') }}">
+    <div class="mb-3">
+      <input type="text" name="query" class="form-control" placeholder="Enter search keywords" value="{{ query }}">
+    </div>
+    <button type="submit" class="btn btn-primary">Search</button>
+  </form>
+  <hr>
+  {% if results %}
+    <div class="row">
+      {% for r in results %}
+        <div class="col-md-4 mb-3">
+          <div class="card">
+            {% if r.preview_image %}
+              <img src="{{ r.preview_image }}" class="card-img-top" alt="{{ r.name }}">
+            {% endif %}
+            <div class="card-body">
+              <h5 class="card-title">{{ r.name }}</h5>
+              <p class="card-text">
+                {% if r.tags %}
+                  <small>Tags: {{ r.tags|join(', ') }}</small><br>
+                {% endif %}
+                <small>Positive: {{ r.pos_percent|round(0) }}%</small><br>
+                <small>Reviews: {{ r.total_reviews }}</small>
+              </p>
+              <!-- Add class "show-loader" to trigger the overlay -->
+              <a href="{{ url_for('detail', appid=r.appid) }}" class="btn btn-primary show-loader">Analyze</a>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endblock %}

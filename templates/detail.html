@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+{% block title %}{{ game.name }} Analysis{% endblock %}
+
+{% block content %}
+  <a href="{{ url_for('search') }}" class="btn btn-secondary mb-3 show-loader">Back to Search</a>
+  <div class="card mb-4">
+    <div class="card-body">
+      <h1 class="card-title">{{ game.name }}</h1>
+      <p class="card-text">
+        <strong>Developers:</strong> {{ game.developers|join(", ") }}<br>
+        <strong>Release Date:</strong> {{ game.release_date }}<br>
+        <strong>{{ "Free to Play" if game.is_free else "Paid" }}</strong>
+      </p>
+    </div>
+  </div>
+
+  <!-- Bootstrap Nav Tabs -->
+  <ul class="nav nav-tabs" id="detailTab" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab">Overview</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="features-tab" data-bs-toggle="tab" data-bs-target="#features" type="button" role="tab">Features & Mechanics</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="community-tab" data-bs-toggle="tab" data-bs-target="#community" type="button" role="tab">Community & Reviews</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="market-tab" data-bs-toggle="tab" data-bs-target="#market" type="button" role="tab">Market Analysis</button>
+    </li>
+  </ul>
+  <div class="tab-content mt-3" id="detailTabContent">
+    <!-- Overview Tab -->
+    <div class="tab-pane fade show active" id="overview" role="tabpanel">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Game Summary</h3>
+          <p>{{ game.short_description }}</p>
+          <h4>AI Analysis</h4>
+          <p>{{ analysis.ai_summary }}</p>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Key Metrics</h3>
+          <p><strong>Positive Reviews:</strong> {{ pos_percent|round(0) }}% ({{ total_reviews }} reviews)</p>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Playtime Distribution</h3>
+          <div id="playtime-chart"></div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Player Growth Trend</h3>
+          <div id="growth-chart"></div>
+        </div>
+      </div>
+    </div>
+    <!-- Features Tab -->
+    <div class="tab-pane fade" id="features" role="tabpanel">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Feature Sentiment</h3>
+          <div id="feature-sentiment-chart"></div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Standout Features</h3>
+          <ul>
+            {% for feat in analysis.standout_features %}
+              <li>{{ feat }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Similar Games</h3>
+          <ul>
+            {% for g in similar_games %}
+              <li>{{ g }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+    <!-- Community Tab -->
+    <div class="tab-pane fade" id="community" role="tabpanel">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Review Sentiment</h3>
+          <div id="review-sentiment-chart"></div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Top Community Feedback</h3>
+          <h5>Strengths</h5>
+          <ul>
+            {% for s in analysis.community_feedback.strengths %}
+              <li>{{ s }}</li>
+            {% endfor %}
+          </ul>
+          <h5>Areas for Improvement</h5>
+          <ul>
+            {% for a in analysis.community_feedback.areas_for_improvement %}
+              <li>{{ a }}</li>
+            {% endfor %}
+          </ul>
+          <h5>Overall Narrative</h5>
+          <p>{{ analysis.community_feedback.narrative }}</p>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Community Engagement</h3>
+          <p><strong>Reviews:</strong> {{ total_reviews }}</p>
+          <p><strong>Positive Reviews:</strong> {{ pos_percent|round(0) }}%</p>
+        </div>
+      </div>
+    </div>
+    <!-- Market Tab -->
+    <div class="tab-pane fade" id="market" role="tabpanel">
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Market Position</h3>
+          <p>{{ analysis.market_analysis.market_position }}</p>
+          <p><strong>Underserved Audience:</strong> {{ analysis.market_analysis.underserved_audience }}</p>
+          <h4>Competitive Advantage</h4>
+          <p>{{ analysis.market_analysis.competitive_advantage }}</p>
+          <h4>Narrative</h4>
+          <p>{{ analysis.market_analysis.narrative }}</p>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-body">
+          <h3 class="card-title">Feature Validation Summary</h3>
+          <h5>Features Worth Implementing</h5>
+          <ul>
+            {% for f in analysis.feature_validation.features_worth_implementing %}
+              <li>{{ f }}</li>
+            {% endfor %}
+          </ul>
+          <h5>Features to Approach with Caution</h5>
+          <ul>
+            {% for f in analysis.feature_validation.features_to_approach_with_caution %}
+              <li>{{ f }}</li>
+            {% endfor %}
+          </ul>
+          <h5>Narrative</h5>
+          <p>{{ analysis.feature_validation.narrative }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <script>
+    // Render Playtime Distribution Chart
+    var playtimeData = {{ playtime_distribution|tojson }};
+    var labels = playtimeData.map(d => d.name);
+    var values = playtimeData.map(d => d.value);
+    var playtimeChartData = [{
+      values: values,
+      labels: labels,
+      type: 'pie',
+      hole: 0.3
+    }];
+    Plotly.newPlot('playtime-chart', playtimeChartData, {margin: {l: 0, r: 0, b: 0, t: 30}});
+
+    // Render Player Growth Trend Chart
+    var growthData = {{ player_growth|tojson }};
+    var months = growthData.map(d => d.month);
+    var players = growthData.map(d => d.players);
+    var growthChartData = [{
+      x: months,
+      y: players,
+      type: 'scatter',
+      mode: 'lines+markers'
+    }];
+    Plotly.newPlot('growth-chart', growthChartData, {margin: {l: 0, r: 0, b: 0, t: 30}});
+
+    // Render Feature Sentiment Chart if data available
+    {% if analysis.feature_sentiment %}
+      var featureData = {{ analysis.feature_sentiment|tojson }};
+      var features = featureData.map(d => d.feature);
+      var positives = featureData.map(d => d.positive);
+      var negatives = featureData.map(d => d.negative);
+      var featChartData = [{
+        x: positives,
+        y: features,
+        name: 'Positive',
+        orientation: 'h',
+        type: 'bar',
+        marker: {color: '#4caf50'}
+      },{
+        x: negatives,
+        y: features,
+        name: 'Negative',
+        orientation: 'h',
+        type: 'bar',
+        marker: {color: '#f44336'}
+      }];
+      var featLayout = {barmode: 'stack', margin: {l: 100, r: 0, b: 0, t: 30}};
+      Plotly.newPlot('feature-sentiment-chart', featChartData, featLayout);
+    {% endif %}
+
+    // Render Review Sentiment Chart if available
+    {% if analysis.community_feedback.sentiment_breakdown %}
+      var reviewSentData = {{ analysis.community_feedback.sentiment_breakdown|tojson }};
+      var reviewLabels = reviewSentData.map(d => d.name);
+      var reviewValues = reviewSentData.map(d => d.value);
+      var reviewChartData = [{
+        values: reviewValues,
+        labels: reviewLabels,
+        type: 'pie',
+        hole: 0.4
+      }];
+      Plotly.newPlot('review-sentiment-chart', reviewChartData, {margin: {l: 0, r: 0, b: 0, t: 30}});
+    {% endif %}
+  </script>
+{% endblock %}
