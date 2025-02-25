@@ -13,11 +13,44 @@
   {% if results %}
     <div class="row">
       {% for r in results %}
-        <div class="col-md-4 mb-3">
+        <div class="col-md-6 mb-3">
           <div class="card">
-            {% if r.preview_image %}
-              <img src="{{ r.preview_image }}" class="card-img-top" alt="{{ r.name }}">
-            {% endif %}
+            <!-- Bootstrap Carousel for each result -->
+            <div id="carousel-{{ r.appid }}" class="carousel slide">
+              <div class="carousel-inner">
+                {% for item in r.media %}
+                  {% set lower_item = item|lower %}
+                  <div class="carousel-item {% if loop.first %}active{% endif %}">
+                    {% if 'webm' in lower_item %}
+                      <!-- If it's .webm (even with ?t= param), embed as HTML5 video -->
+                      <video class="d-block w-100" controls>
+                        <source src="{{ item }}" type="video/webm">
+                        Your browser does not support the video tag.
+                      </video>
+                    {% elif 'mp4' in lower_item %}
+                      <!-- If it's .mp4, embed as HTML5 video -->
+                      <video class="d-block w-100" controls>
+                        <source src="{{ item }}" type="video/mp4">
+                        Your browser does not support the video tag.
+                      </video>
+                    {% else %}
+                      <!-- Otherwise treat as an image -->
+                      <img src="{{ item }}" class="d-block w-100" alt="{{ r.name }}">
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+              {% if r.media|length > 1 %}
+                <button class="carousel-control-prev" type="button" data-bs-target="#carousel-{{ r.appid }}" data-bs-slide="prev">
+                  <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                  <span class="visually-hidden">Previous</span>
+                </button>
+                <button class="carousel-control-next" type="button" data-bs-target="#carousel-{{ r.appid }}" data-bs-slide="next">
+                  <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                  <span class="visually-hidden">Next</span>
+                </button>
+              {% endif %}
+            </div>
             <div class="card-body">
               <h5 class="card-title">{{ r.name }}</h5>
               <p class="card-text">
@@ -27,7 +60,18 @@
                 <small>Positive: {{ r.pos_percent|round(0) }}%</small><br>
                 <small>Reviews: {{ r.total_reviews }}</small>
               </p>
-              <!-- Add class "show-loader" to trigger the overlay -->
+              {% if r.ai_summary %}
+                <p>
+                  <a class="btn btn-secondary" data-bs-toggle="collapse" href="#summary-{{ r.appid }}" role="button" aria-expanded="false" aria-controls="summary-{{ r.appid }}">
+                    Show AI Summary
+                  </a>
+                </p>
+                <div class="collapse" id="summary-{{ r.appid }}">
+                  <div class="card card-body">
+                    {{ r.ai_summary }}
+                  </div>
+                </div>
+              {% endif %}
               <a href="{{ url_for('detail', appid=r.appid) }}" class="btn btn-primary show-loader">Analyze</a>
             </div>
           </div>
