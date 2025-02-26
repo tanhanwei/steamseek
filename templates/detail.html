@@ -4,7 +4,7 @@
 {% block content %}
   <div class="mb-3">
     <!-- Preserve the original search query (if any) in the URL -->
-    <a href="{{ url_for('search', q=request.args.get('q', '')) }}" class="btn btn-secondary show-loader">Back to Search</a>
+    <a href="{{ url_for('search', q=request.args.get('q', '')) }}" class="btn btn-secondary">Back to Search</a>
     <!-- "Analyze Again" button: appends refresh=1 while keeping the original query -->
     <a href="{{ url_for('detail', appid=game.appid, q=request.args.get('q', ''), refresh='1') }}" class="btn btn-warning show-loader">Analyze Again</a>
   </div>

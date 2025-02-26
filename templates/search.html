@@ -65,12 +65,12 @@
                 </p>
                 <div class="collapse" id="summary-{{ r.appid }}">
                   <div class="card card-body">
-                    <!-- Use the markdown filter to render markdown as HTML -->
                     {{ r.ai_summary|markdown }}
                   </div>
                 </div>
               {% endif %}
-              <a href="{{ url_for('detail', appid=r.appid) }}" class="btn btn-primary show-loader">Analyze</a>
+              <!-- Include the current query (q) in the link -->
+              <a href="{{ url_for('detail', appid=r.appid, q=query) }}" class="btn btn-primary show-loader">Analyze</a>
             </div>
           </div>
         </div>

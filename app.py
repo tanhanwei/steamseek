@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session
 from markupsafe import Markup
 import os
 import json
@@ -11,6 +11,7 @@ from game_chatbot import semantic_search_query
 from llm_processor import generate_game_analysis
 
 app = Flask(__name__)
+app.secret_key = "your-secret-key"  # Required for session support
 
 # Custom Jinja filter to render markdown as HTML
 def markdown_filter(text):
@@ -65,67 +66,135 @@ def save_analysis_cache(cache: dict, file_path: str):
 def search():
     query = ""
     results = []
-    # Get query from form (POST) or URL parameter (GET)
+
     if request.method == "POST":
-        query = request.form.get("query", "")
+        query = request.form.get("query", "").strip()
+        if query:
+            # Run semantic search and build results
+            summaries_dict = load_summaries(SUMMARIES_FILE)
+            raw_results = semantic_search_query(query, top_k=20)
+            if raw_results:
+                for r in raw_results:
+                    appid = r.get("appid")
+                    if not appid:
+                        continue
+                    game_data = get_game_data_by_appid(int(appid), STEAM_DATA_FILE, index_map)
+                    if not game_data:
+                        continue
+
+                    reviews = game_data.get("reviews", [])
+                    total_reviews = len(reviews)
+                    positive_count = sum(1 for review in reviews if review.get("voted_up"))
+                    pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
+
+                    media = []
+                    if game_data.get("header_image"):
+                        media.append(force_https(game_data["header_image"]))
+                    if isinstance(game_data.get("screenshots"), list):
+                        for s in game_data["screenshots"]:
+                            if isinstance(s, dict) and s.get("path_full"):
+                                media.append(force_https(s["path_full"]))
+                            else:
+                                media.append(force_https(str(s)))
+                    store_data = game_data.get("store_data", {})
+                    if isinstance(store_data, dict):
+                        movies = store_data.get("movies", [])
+                        for movie in movies:
+                            webm_max = movie.get("webm", {}).get("max")
+                            mp4_max = movie.get("mp4", {}).get("max")
+                            if webm_max:
+                                media.append(force_https(webm_max))
+                            elif mp4_max:
+                                media.append(force_https(mp4_max))
+                            else:
+                                thumb = movie.get("thumbnail")
+                                if thumb:
+                                    media.append(force_https(thumb))
+
+                    summary_obj = summaries_dict.get(int(appid), {})
+                    ai_summary = summary_obj.get("ai_summary", "")
+
+                    results.append({
+                        "appid": appid,
+                        "name": game_data.get("name", "Unknown"),
+                        "media": media,
+                        "tags": [g.get("description") for g in game_data.get("genres", []) if g.get("description")],
+                        "pos_percent": pos_percent,
+                        "total_reviews": total_reviews,
+                        "ai_summary": ai_summary
+                    })
+            # Cache the query and its results in session
+            session["last_search"] = {"query": query, "results": results}
+        else:
+            session.pop("last_search", None)
     elif request.method == "GET":
-        query = request.args.get("q", "")
-    
-    # Load pre-run summaries from file (used for search metadata)
-    summaries_dict = load_summaries(SUMMARIES_FILE)
+        # Check for query parameter; if empty, use cached search from session
+        query = request.args.get("q", "").strip()
+        if not query and "last_search" in session:
+            cached = session["last_search"]
+            query = cached.get("query", "")
+            results = cached.get("results", [])
+        elif query:
+            # If a query is passed via URL, check if it matches the cached query
+            cached = session.get("last_search", {})
+            if cached.get("query", "") == query:
+                results = cached.get("results", [])
+            else:
+                # Otherwise, run a fresh search (and update session)
+                summaries_dict = load_summaries(SUMMARIES_FILE)
+                raw_results = semantic_search_query(query, top_k=20)
+                if raw_results:
+                    for r in raw_results:
+                        appid = r.get("appid")
+                        if not appid:
+                            continue
+                        game_data = get_game_data_by_appid(int(appid), STEAM_DATA_FILE, index_map)
+                        if not game_data:
+                            continue
 
-    if query:
-        raw_results = semantic_search_query(query, top_k=20)
-        if raw_results:
-            for r in raw_results:
-                appid = r.get("appid")
-                if not appid:
-                    continue
-                game_data = get_game_data_by_appid(int(appid), STEAM_DATA_FILE, index_map)
-                if not game_data:
-                    continue
+                        reviews = game_data.get("reviews", [])
+                        total_reviews = len(reviews)
+                        positive_count = sum(1 for review in reviews if review.get("voted_up"))
+                        pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
 
-                reviews = game_data.get("reviews", [])
-                total_reviews = len(reviews)
-                positive_count = sum(1 for review in reviews if review.get("voted_up"))
-                pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
+                        media = []
+                        if game_data.get("header_image"):
+                            media.append(force_https(game_data["header_image"]))
+                        if isinstance(game_data.get("screenshots"), list):
+                            for s in game_data["screenshots"]:
+                                if isinstance(s, dict) and s.get("path_full"):
+                                    media.append(force_https(s["path_full"]))
+                                else:
+                                    media.append(force_https(str(s)))
+                        store_data = game_data.get("store_data", {})
+                        if isinstance(store_data, dict):
+                            movies = store_data.get("movies", [])
+                            for movie in movies:
+                                webm_max = movie.get("webm", {}).get("max")
+                                mp4_max = movie.get("mp4", {}).get("max")
+                                if webm_max:
+                                    media.append(force_https(webm_max))
+                                elif mp4_max:
+                                    media.append(force_https(mp4_max))
+                                else:
+                                    thumb = movie.get("thumbnail")
+                                    if thumb:
+                                        media.append(force_https(thumb))
 
-                media = []
-                if game_data.get("header_image"):
-                    media.append(force_https(game_data["header_image"]))
-                if isinstance(game_data.get("screenshots"), list):
-                    for s in game_data["screenshots"]:
-                        if isinstance(s, dict) and s.get("path_full"):
-                            media.append(force_https(s["path_full"]))
-                        else:
-                            media.append(force_https(str(s)))
-                store_data = game_data.get("store_data", {})
-                if isinstance(store_data, dict):
-                    movies = store_data.get("movies", [])
-                    for movie in movies:
-                        webm_max = movie.get("webm", {}).get("max")
-                        mp4_max = movie.get("mp4", {}).get("max")
-                        if webm_max:
-                            media.append(force_https(webm_max))
-                        elif mp4_max:
-                            media.append(force_https(mp4_max))
-                        else:
-                            thumb = movie.get("thumbnail")
-                            if thumb:
-                                media.append(force_https(thumb))
+                        summary_obj = summaries_dict.get(int(appid), {})
+                        ai_summary = summary_obj.get("ai_summary", "")
 
-                summary_obj = summaries_dict.get(int(appid), {})
-                ai_summary = summary_obj.get("ai_summary", "")
+                        results.append({
+                            "appid": appid,
+                            "name": game_data.get("name", "Unknown"),
+                            "media": media,
+                            "tags": [g.get("description") for g in game_data.get("genres", []) if g.get("description")],
+                            "pos_percent": pos_percent,
+                            "total_reviews": total_reviews,
+                            "ai_summary": ai_summary
+                        })
+                session["last_search"] = {"query": query, "results": results}
 
-                results.append({
-                    "appid": appid,
-                    "name": game_data.get("name", "Unknown"),
-                    "media": media,
-                    "tags": [g.get("description") for g in game_data.get("genres", []) if g.get("description")],
-                    "pos_percent": pos_percent,
-                    "total_reviews": total_reviews,
-                    "ai_summary": ai_summary
-                })
     return render_template("search.html", query=query, results=results)
 
 #############################################
@@ -225,7 +294,6 @@ def detail(appid):
                 if thumb:
                     media.append(force_https(thumb))
 
-    # Pass all computed data to the detail template
     return render_template("detail.html",
                            game=game_data,
                            analysis=analysis,
