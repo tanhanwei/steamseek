@@ -2,7 +2,12 @@
 {% block title %}{{ game.name }} Analysis{% endblock %}
 
 {% block content %}
-  <a href="{{ url_for('search') }}" class="btn btn-secondary mb-3 show-loader">Back to Search</a>
+  <div class="mb-3">
+    <!-- Preserve the original search query (if any) in the URL -->
+    <a href="{{ url_for('search', q=request.args.get('q', '')) }}" class="btn btn-secondary show-loader">Back to Search</a>
+    <!-- "Analyze Again" button: appends refresh=1 while keeping the original query -->
+    <a href="{{ url_for('detail', appid=game.appid, q=request.args.get('q', ''), refresh='1') }}" class="btn btn-warning show-loader">Analyze Again</a>
+  </div>
 
   <!-- Carousel for images and videos at the top -->
   {% if media %}
