@@ -47,13 +47,22 @@
 
   <div class="card mb-4">
     <div class="card-body">
-      <h1 class="card-title">{{ game.name }}</h1>
+      <h1 class="card-title">
+        <a href="https://store.steampowered.com/app/{{ game.appid }}/" target="_blank" style="text-decoration: none; color: inherit;">
+          {{ game.name }}
+        </a>
+      </h1>
       <p class="card-text">
         <strong>Developers:</strong> {{ game.developers|join(", ") }}<br>
         <strong>Release Date:</strong> {{ game.release_date }}<br>
         <strong>{{ "Free to Play" if game.is_free else "Paid" }}</strong>
       </p>
     </div>
+  </div>
+  
+  <!-- YouTube Search Button -->
+  <div class="mb-3">
+    <a href="https://www.youtube.com/results?search_query={{ game.name|replace(' ', '+') }}+gameplay" target="_blank" class="btn btn-danger">Watch Gameplay on YouTube</a>
   </div>
 
   <!-- Bootstrap Nav Tabs -->

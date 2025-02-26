@@ -102,7 +102,11 @@
               {% endif %}
             </div>
             <div class="card-body">
-              <h5 class="card-title">{{ r.name }}</h5>
+              <h5 class="card-title">
+                <a href="https://store.steampowered.com/app/{{ r.appid }}/" target="_blank" style="text-decoration: none; color: inherit;">
+                  {{ r.name }}
+                </a>
+              </h5>
               <p class="card-text">
                 {% if r.genres %}
                   <small>Genres: {{ r.genres|join(', ') }}</small><br>
@@ -124,8 +128,10 @@
                   </div>
                 </div>
               {% endif %}
-              <!-- Include the current query (q) in the link -->
-              <a href="{{ url_for('detail', appid=r.appid, q=query) }}" class="btn btn-primary show-loader">Analyze</a>
+              <div class="d-flex gap-2">
+                <a href="{{ url_for('detail', appid=r.appid, q=query) }}" class="btn btn-primary show-loader">Analyze</a>
+                <a href="https://www.youtube.com/results?search_query={{ r.name|replace(' ', '+') }}+gameplay" target="_blank" class="btn btn-danger">YouTube</a>
+              </div>
             </div>
           </div>
         </div>
