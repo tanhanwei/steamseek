@@ -7,6 +7,59 @@
     <div class="mb-3">
       <input type="text" name="query" class="form-control" placeholder="Enter search keywords" value="{{ query }}">
     </div>
+    <div class="row mb-3">
+      <div class="col-md-3">
+        <label for="genre">Genre:</label>
+        <select name="genre" class="form-select">
+          <option value="All" {% if selected_genre == "All" %}selected{% endif %}>All</option>
+          <option value="Casual" {% if selected_genre == "Casual" %}selected{% endif %}>Casual</option>
+          <option value="Indie" {% if selected_genre == "Indie" %}selected{% endif %}>Indie</option>
+          <option value="Action" {% if selected_genre == "Action" %}selected{% endif %}>Action</option>
+          <!-- Add more genres as needed -->
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label for="release_year">Release Year:</label>
+        <select name="release_year" class="form-select">
+          <option value="All" {% if selected_year == "All" %}selected{% endif %}>All</option>
+          <!-- Example options; extend as needed -->
+          <option value="2024" {% if selected_year == "2024" %}selected{% endif %}>2024</option>
+          <option value="2023" {% if selected_year == "2023" %}selected{% endif %}>2023</option>
+          <option value="2022" {% if selected_year == "2022" %}selected{% endif %}>2022</option>
+          <option value="2021" {% if selected_year == "2021" %}selected{% endif %}>2021</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label for="platform">Platform:</label>
+        <select name="platform" class="form-select">
+          <option value="All" {% if selected_platform == "All" %}selected{% endif %}>All</option>
+          <option value="Windows" {% if selected_platform == "Windows" %}selected{% endif %}>Windows</option>
+          <option value="Mac" {% if selected_platform == "Mac" %}selected{% endif %}>Mac</option>
+          <option value="Linux" {% if selected_platform == "Linux" %}selected{% endif %}>Linux</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label for="price">Price:</label>
+        <select name="price" class="form-select">
+          <option value="All" {% if selected_price == "All" %}selected{% endif %}>All</option>
+          <option value="Free" {% if selected_price == "Free" %}selected{% endif %}>Free</option>
+          <option value="Paid" {% if selected_price == "Paid" %}selected{% endif %}>Paid</option>
+        </select>
+      </div>
+    </div>
+    <div class="mb-3">
+      <label for="sort_by">Sort By:</label>
+      <select name="sort_by" class="form-select">
+        <option value="Relevance" {% if sort_by == "Relevance" %}selected{% endif %}>Relevance</option>
+        <option value="Name (A-Z)" {% if sort_by == "Name (A-Z)" %}selected{% endif %}>Name (A-Z)</option>
+        <option value="Release Date (Newest)" {% if sort_by == "Release Date (Newest)" %}selected{% endif %}>Release Date (Newest)</option>
+        <option value="Release Date (Oldest)" {% if sort_by == "Release Date (Oldest)" %}selected{% endif %}>Release Date (Oldest)</option>
+        <option value="Price (Low to High)" {% if sort_by == "Price (Low to High)" %}selected{% endif %}>Price (Low to High)</option>
+        <option value="Price (High to Low)" {% if sort_by == "Price (High to Low)" %}selected{% endif %}>Price (High to Low)</option>
+        <option value="Review Count (High to Low)" {% if sort_by == "Review Count (High to Low)" %}selected{% endif %}>Review Count (High to Low)</option>
+        <option value="Positive Review % (High to Low)" {% if sort_by == "Positive Review % (High to Low)" %}selected{% endif %}>Positive Review % (High to Low)</option>
+      </select>
+    </div>
     <button type="submit" class="btn btn-primary">Search</button>
   </form>
   <hr>
@@ -51,9 +104,11 @@
             <div class="card-body">
               <h5 class="card-title">{{ r.name }}</h5>
               <p class="card-text">
-                {% if r.tags %}
-                  <small>Tags: {{ r.tags|join(', ') }}</small><br>
+                {% if r.genres %}
+                  <small>Genres: {{ r.genres|join(', ') }}</small><br>
                 {% endif %}
+                <small>Release Year: {{ r.release_year }}</small><br>
+                <small>Price: {% if r.is_free %}Free{% else %}${{ r.price }}{% endif %}</small><br>
                 <small>Positive: {{ r.pos_percent|round(0) }}%</small><br>
                 <small>Reviews: {{ r.total_reviews }}</small>
               </p>
@@ -76,5 +131,7 @@
         </div>
       {% endfor %}
     </div>
+  {% else %}
+    <p>Type something in the box above to begin searching.</p>
   {% endif %}
 {% endblock %}

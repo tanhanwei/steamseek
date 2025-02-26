@@ -60,146 +60,196 @@ def save_analysis_cache(cache: dict, file_path: str):
         app.logger.error(f"Error saving analysis cache: {e}")
 
 #############################################
-# Search Route (uses pre-run summaries for semantic search)
+# Search Helper with Filtering and Sorting
+#############################################
+def perform_search(query, selected_genre="All", selected_year="All", selected_platform="All", selected_price="All", sort_by="Relevance"):
+    results = []
+    summaries_dict = load_summaries(SUMMARIES_FILE)
+    raw_results = semantic_search_query(query, top_k=20)
+    if raw_results:
+        for r in raw_results:
+            appid = r.get("appid")
+            if not appid:
+                continue
+            game_data = get_game_data_by_appid(int(appid), STEAM_DATA_FILE, index_map)
+            if not game_data:
+                continue
+
+            reviews = game_data.get("reviews", [])
+            total_reviews = len(reviews)
+            positive_count = sum(1 for review in reviews if review.get("voted_up"))
+            pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
+
+            # Build media list
+            media = []
+            if game_data.get("header_image"):
+                media.append(force_https(game_data["header_image"]))
+            if isinstance(game_data.get("screenshots"), list):
+                for s in game_data["screenshots"]:
+                    if isinstance(s, dict) and s.get("path_full"):
+                        media.append(force_https(s["path_full"]))
+                    else:
+                        media.append(force_https(str(s)))
+            store_data = game_data.get("store_data", {})
+            if isinstance(store_data, dict):
+                movies = store_data.get("movies", [])
+                for movie in movies:
+                    webm_max = movie.get("webm", {}).get("max")
+                    mp4_max = movie.get("mp4", {}).get("max")
+                    if webm_max:
+                        media.append(force_https(webm_max))
+                    elif mp4_max:
+                        media.append(force_https(mp4_max))
+                    else:
+                        thumb = movie.get("thumbnail")
+                        if thumb:
+                            media.append(force_https(thumb))
+
+            summary_obj = summaries_dict.get(int(appid), {})
+            ai_summary = summary_obj.get("ai_summary", "")
+
+            # Get genres from store_data if available
+            if "store_data" in game_data and isinstance(game_data["store_data"], dict):
+                genre_list = game_data["store_data"].get("genres", [])
+                genres = [g.get("description") for g in genre_list if g.get("description")]
+            else:
+                genres = []
+
+            # Parse release year from release_date string
+            release_date_str = game_data.get("release_date", "")
+            if release_date_str:
+                try:
+                    year = release_date_str.split(",")[-1].strip()
+                except:
+                    year = "Unknown"
+            else:
+                year = "Unknown"
+
+            # Get platform info from store_data
+            platforms = game_data.get("store_data", {}).get("platforms", {})
+
+            # Get price and free status
+            is_free = game_data.get("store_data", {}).get("is_free", False)
+            price = 0.0
+            if not is_free:
+                price_overview = game_data.get("store_data", {}).get("price_overview", {})
+                if price_overview:
+                    price = price_overview.get("final", 0) / 100.0
+
+            # Apply filters
+            if selected_genre != "All" and selected_genre not in genres:
+                continue
+            if selected_year != "All" and year != selected_year:
+                continue
+            if selected_platform != "All":
+                platform_key = selected_platform.lower()  # e.g., "windows", "mac", "linux"
+                if not platforms.get(platform_key, False):
+                    continue
+            if selected_price == "Free" and not is_free:
+                continue
+            if selected_price == "Paid" and is_free:
+                continue
+
+            results.append({
+                "appid": appid,
+                "name": game_data.get("name", "Unknown"),
+                "media": media,
+                "genres": genres,
+                "release_year": year,
+                "platforms": platforms,
+                "is_free": is_free,
+                "price": price,
+                "pos_percent": pos_percent,
+                "total_reviews": total_reviews,
+                "ai_summary": ai_summary
+            })
+    # Apply sorting
+    if sort_by == "Name (A-Z)":
+        results.sort(key=lambda x: x["name"])
+    elif sort_by == "Release Date (Newest)":
+        results.sort(key=lambda x: int(x["release_year"]) if x["release_year"].isdigit() else 0, reverse=True)
+    elif sort_by == "Release Date (Oldest)":
+        results.sort(key=lambda x: int(x["release_year"]) if x["release_year"].isdigit() else float('inf'))
+    elif sort_by == "Price (Low to High)":
+        results.sort(key=lambda x: x["price"])
+    elif sort_by == "Price (High to Low)":
+        results.sort(key=lambda x: x["price"], reverse=True)
+    elif sort_by == "Review Count (High to Low)":
+        results.sort(key=lambda x: x["total_reviews"], reverse=True)
+    elif sort_by == "Positive Review % (High to Low)":
+        results.sort(key=lambda x: x["pos_percent"], reverse=True)
+    # "Relevance" leaves the order as returned by semantic search
+
+    return results
+
+#############################################
+# Routes
 #############################################
 @app.route("/", methods=["GET", "POST"])
 def search():
     query = ""
     results = []
+    # Default filter values
+    selected_genre = "All"
+    selected_year = "All"
+    selected_platform = "All"
+    selected_price = "All"
+    sort_by = "Relevance"
 
     if request.method == "POST":
         query = request.form.get("query", "").strip()
+        selected_genre = request.form.get("genre", "All")
+        selected_year = request.form.get("release_year", "All")
+        selected_platform = request.form.get("platform", "All")
+        selected_price = request.form.get("price", "All")
+        sort_by = request.form.get("sort_by", "Relevance")
+
         if query:
-            # Run semantic search and build results
-            summaries_dict = load_summaries(SUMMARIES_FILE)
-            raw_results = semantic_search_query(query, top_k=20)
-            if raw_results:
-                for r in raw_results:
-                    appid = r.get("appid")
-                    if not appid:
-                        continue
-                    game_data = get_game_data_by_appid(int(appid), STEAM_DATA_FILE, index_map)
-                    if not game_data:
-                        continue
-
-                    reviews = game_data.get("reviews", [])
-                    total_reviews = len(reviews)
-                    positive_count = sum(1 for review in reviews if review.get("voted_up"))
-                    pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
-
-                    media = []
-                    if game_data.get("header_image"):
-                        media.append(force_https(game_data["header_image"]))
-                    if isinstance(game_data.get("screenshots"), list):
-                        for s in game_data["screenshots"]:
-                            if isinstance(s, dict) and s.get("path_full"):
-                                media.append(force_https(s["path_full"]))
-                            else:
-                                media.append(force_https(str(s)))
-                    store_data = game_data.get("store_data", {})
-                    if isinstance(store_data, dict):
-                        movies = store_data.get("movies", [])
-                        for movie in movies:
-                            webm_max = movie.get("webm", {}).get("max")
-                            mp4_max = movie.get("mp4", {}).get("max")
-                            if webm_max:
-                                media.append(force_https(webm_max))
-                            elif mp4_max:
-                                media.append(force_https(mp4_max))
-                            else:
-                                thumb = movie.get("thumbnail")
-                                if thumb:
-                                    media.append(force_https(thumb))
-
-                    summary_obj = summaries_dict.get(int(appid), {})
-                    ai_summary = summary_obj.get("ai_summary", "")
-
-                    results.append({
-                        "appid": appid,
-                        "name": game_data.get("name", "Unknown"),
-                        "media": media,
-                        "tags": [g.get("description") for g in game_data.get("genres", []) if g.get("description")],
-                        "pos_percent": pos_percent,
-                        "total_reviews": total_reviews,
-                        "ai_summary": ai_summary
-                    })
-            # Cache the query and its results in session
-            session["last_search"] = {"query": query, "results": results}
+            results = perform_search(query, selected_genre, selected_year, selected_platform, selected_price, sort_by)
+            session["last_search"] = {
+                "query": query,
+                "results": results,
+                "filters": {
+                    "genre": selected_genre,
+                    "release_year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                    "sort_by": sort_by
+                }
+            }
         else:
             session.pop("last_search", None)
     elif request.method == "GET":
-        # Check for query parameter; if empty, use cached search from session
         query = request.args.get("q", "").strip()
-        if not query and "last_search" in session:
+        selected_genre = request.args.get("genre", "All")
+        selected_year = request.args.get("release_year", "All")
+        selected_platform = request.args.get("platform", "All")
+        selected_price = request.args.get("price", "All")
+        sort_by = request.args.get("sort_by", "Relevance")
+
+        if query:
+            results = perform_search(query, selected_genre, selected_year, selected_platform, selected_price, sort_by)
+            session["last_search"] = {
+                "query": query,
+                "results": results,
+                "filters": {
+                    "genre": selected_genre,
+                    "release_year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                    "sort_by": sort_by
+                }
+            }
+        elif "last_search" in session:
             cached = session["last_search"]
             query = cached.get("query", "")
             results = cached.get("results", [])
-        elif query:
-            # If a query is passed via URL, check if it matches the cached query
-            cached = session.get("last_search", {})
-            if cached.get("query", "") == query:
-                results = cached.get("results", [])
-            else:
-                # Otherwise, run a fresh search (and update session)
-                summaries_dict = load_summaries(SUMMARIES_FILE)
-                raw_results = semantic_search_query(query, top_k=20)
-                if raw_results:
-                    for r in raw_results:
-                        appid = r.get("appid")
-                        if not appid:
-                            continue
-                        game_data = get_game_data_by_appid(int(appid), STEAM_DATA_FILE, index_map)
-                        if not game_data:
-                            continue
 
-                        reviews = game_data.get("reviews", [])
-                        total_reviews = len(reviews)
-                        positive_count = sum(1 for review in reviews if review.get("voted_up"))
-                        pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
+    return render_template("search.html", query=query, results=results,
+                           selected_genre=selected_genre, selected_year=selected_year,
+                           selected_platform=selected_platform, selected_price=selected_price,
+                           sort_by=sort_by)
 
-                        media = []
-                        if game_data.get("header_image"):
-                            media.append(force_https(game_data["header_image"]))
-                        if isinstance(game_data.get("screenshots"), list):
-                            for s in game_data["screenshots"]:
-                                if isinstance(s, dict) and s.get("path_full"):
-                                    media.append(force_https(s["path_full"]))
-                                else:
-                                    media.append(force_https(str(s)))
-                        store_data = game_data.get("store_data", {})
-                        if isinstance(store_data, dict):
-                            movies = store_data.get("movies", [])
-                            for movie in movies:
-                                webm_max = movie.get("webm", {}).get("max")
-                                mp4_max = movie.get("mp4", {}).get("max")
-                                if webm_max:
-                                    media.append(force_https(webm_max))
-                                elif mp4_max:
-                                    media.append(force_https(mp4_max))
-                                else:
-                                    thumb = movie.get("thumbnail")
-                                    if thumb:
-                                        media.append(force_https(thumb))
-
-                        summary_obj = summaries_dict.get(int(appid), {})
-                        ai_summary = summary_obj.get("ai_summary", "")
-
-                        results.append({
-                            "appid": appid,
-                            "name": game_data.get("name", "Unknown"),
-                            "media": media,
-                            "tags": [g.get("description") for g in game_data.get("genres", []) if g.get("description")],
-                            "pos_percent": pos_percent,
-                            "total_reviews": total_reviews,
-                            "ai_summary": ai_summary
-                        })
-                session["last_search"] = {"query": query, "results": results}
-
-    return render_template("search.html", query=query, results=results)
-
-#############################################
-# Detail Route (for analysis and dashboard)
-#############################################
 @app.route("/detail/<appid>")
 def detail(appid):
     try:
