@@ -22,19 +22,16 @@
                   {% set lower_item = item|lower %}
                   <div class="carousel-item {% if loop.first %}active{% endif %}">
                     {% if 'webm' in lower_item %}
-                      <!-- If it's .webm (even with ?t= param), embed as HTML5 video -->
                       <video class="d-block w-100" controls>
                         <source src="{{ item }}" type="video/webm">
                         Your browser does not support the video tag.
                       </video>
                     {% elif 'mp4' in lower_item %}
-                      <!-- If it's .mp4, embed as HTML5 video -->
                       <video class="d-block w-100" controls>
                         <source src="{{ item }}" type="video/mp4">
                         Your browser does not support the video tag.
                       </video>
                     {% else %}
-                      <!-- Otherwise treat as an image -->
                       <img src="{{ item }}" class="d-block w-100" alt="{{ r.name }}">
                     {% endif %}
                   </div>
@@ -68,7 +65,8 @@
                 </p>
                 <div class="collapse" id="summary-{{ r.appid }}">
                   <div class="card card-body">
-                    {{ r.ai_summary }}
+                    <!-- Use the markdown filter to render markdown as HTML -->
+                    {{ r.ai_summary|markdown }}
                   </div>
                 </div>
               {% endif %}

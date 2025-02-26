@@ -1,14 +1,25 @@
 from flask import Flask, render_template, request
+from markupsafe import Markup
+
 import os
 import json
 import logging
+import markdown  # Ensure you've run: pip install markdown
 from game_dashboard import build_steam_data_index, load_summaries, get_game_data_by_appid
 from game_chatbot import semantic_search_query
 from llm_processor import generate_game_analysis
 
 app = Flask(__name__)
 
-# Constants
+# Define a custom Jinja filter to convert markdown to HTML
+def markdown_filter(text):
+    # Convert markdown text to HTML and mark it safe for rendering
+    return Markup(markdown.markdown(text))
+
+# Register the filter explicitly
+app.jinja_env.filters['markdown'] = markdown_filter
+
+# Constants for file paths
 STEAM_DATA_FILE = "data/steam_games_data.jsonl"
 SUMMARIES_FILE = "data/summaries.jsonl"
 
@@ -17,10 +28,6 @@ index_map = build_steam_data_index(STEAM_DATA_FILE)
 summaries_dict = load_summaries(SUMMARIES_FILE)
 
 def force_https(url: str) -> str:
-    """
-    If a URL starts with 'http://', convert to 'https://'.
-    Useful to avoid mixed-content blocking in browsers.
-    """
     if url.startswith("http://"):
         return "https://" + url[7:]
     return url
@@ -50,20 +57,14 @@ def search():
 
                     # Build media list for carousel
                     media = []
-
-                    # 1) Header image
                     if game_data.get("header_image"):
                         media.append(force_https(game_data["header_image"]))
-
-                    # 2) Screenshots
                     if isinstance(game_data.get("screenshots"), list):
                         for s in game_data["screenshots"]:
                             if isinstance(s, dict) and s.get("path_full"):
                                 media.append(force_https(s["path_full"]))
                             else:
                                 media.append(force_https(str(s)))
-
-                    # 3) Videos from store_data
                     store_data = game_data.get("store_data", {})
                     if isinstance(store_data, dict):
                         movies = store_data.get("movies")
@@ -73,14 +74,10 @@ def search():
                                 webm_max = movie.get("webm", {}).get("max")
                                 mp4_480 = movie.get("mp4", {}).get("480")
                                 mp4_max = movie.get("mp4", {}).get("max")
-
-                                # Force HTTPS
                                 if webm_480: webm_480 = force_https(webm_480)
                                 if webm_max: webm_max = force_https(webm_max)
                                 if mp4_480: mp4_480 = force_https(mp4_480)
                                 if mp4_max: mp4_max = force_https(mp4_max)
-
-                                # Prefer webm max -> mp4 max -> webm 480 -> mp4 480 -> fallback to thumbnail
                                 if webm_max:
                                     media.append(webm_max)
                                 elif mp4_max:
@@ -94,7 +91,7 @@ def search():
                                     if thumb:
                                         media.append(force_https(thumb))
 
-                    # AI summary from cached summaries if available
+                    # Retrieve the cached AI summary (in markdown)
                     summary_obj = summaries_dict.get(int(appid), {})
                     ai_summary = summary_obj.get("ai_summary", "")
 
@@ -114,7 +111,6 @@ def search():
 
     return render_template("search.html", query=query, results=results)
 
-
 @app.route("/detail/<appid>")
 def detail(appid):
     try:
@@ -126,7 +122,6 @@ def detail(appid):
     if not game_data:
         return "Game not found", 404
 
-    # If we don't have a full analysis in summaries, generate it now
     required_keys = {
         "ai_summary", "feature_sentiment", "standout_features",
         "community_feedback", "market_analysis", "feature_validation"
@@ -137,90 +132,48 @@ def detail(appid):
     else:
         analysis = summary_obj
 
-    # Basic review stats
     reviews = game_data.get("reviews", [])
     total_reviews = len(reviews)
     positive_count = sum(1 for r in reviews if r.get("voted_up"))
     pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
 
-    # Playtime distribution
-    if "derived" in game_data and "playtime_distribution" in game_data["derived"]:
-        playtime_distribution = game_data["derived"]["playtime_distribution"]
-    else:
-        playtime_buckets = {"<10h": 0, "10-50h": 0, "50-100h": 0, ">100h": 0}
-        for r in reviews:
-            hours = r.get("playtime_forever", 0) / 60
-            if hours < 10:
-                playtime_buckets["<10h"] += 1
-            elif hours < 50:
-                playtime_buckets["10-50h"] += 1
-            elif hours < 100:
-                playtime_buckets["50-100h"] += 1
-            else:
-                playtime_buckets[">100h"] += 1
-        playtime_distribution = [
-            {"name": k, "value": v} for k, v in playtime_buckets.items()
+    # Compute playtime distribution for the chart
+    playtime_buckets = {"<10h": 0, "10-50h": 0, "50-100h": 0, ">100h": 0}
+    for r in reviews:
+        hours = r.get("playtime_forever", 0) / 60
+        if hours < 10:
+            playtime_buckets["<10h"] += 1
+        elif hours < 50:
+            playtime_buckets["10-50h"] += 1
+        elif hours < 100:
+            playtime_buckets["50-100h"] += 1
+        else:
+            playtime_buckets[">100h"] += 1
+    playtime_distribution = [{"name": k, "value": v} for k, v in playtime_buckets.items()]
+
+    # Compute player growth data (or fallback if not available)
+    player_growth = game_data.get("player_growth")
+    if not player_growth or not isinstance(player_growth, list):
+        player_growth = [
+            {"month": "Jan", "players": 125},
+            {"month": "Feb", "players": 350},
+            {"month": "Mar", "players": 410},
+            {"month": "Apr", "players": 380},
+            {"month": "May", "players": 425},
         ]
+        player_growth_available = False
+    else:
+        player_growth_available = True
 
-    # Player growth data
-    player_growth = game_data.get("player_growth", [])
-    player_growth_available = bool(player_growth and isinstance(player_growth, list))
+    return render_template("detail.html",
+                           game=game_data,
+                           analysis=analysis,
+                           pos_percent=pos_percent,
+                           total_reviews=total_reviews,
+                           playtime_distribution=playtime_distribution,
+                           player_growth=player_growth,
+                           player_growth_available=player_growth_available)
 
-    # Build detail media carousel
-    media = []
-    # 1) header_image
-    if game_data.get("header_image"):
-        media.append(force_https(game_data["header_image"]))
-
-    # 2) screenshots
-    if isinstance(game_data.get("screenshots"), list):
-        for s in game_data["screenshots"]:
-            if isinstance(s, dict) and s.get("path_full"):
-                media.append(force_https(s["path_full"]))
-            else:
-                media.append(force_https(str(s)))
-
-    # 3) store_data -> movies
-    store_data = game_data.get("store_data", {})
-    if isinstance(store_data, dict):
-        movies = store_data.get("movies")
-        if isinstance(movies, list):
-            for movie in movies:
-                webm_480 = movie.get("webm", {}).get("480")
-                webm_max = movie.get("webm", {}).get("max")
-                mp4_480 = movie.get("mp4", {}).get("480")
-                mp4_max = movie.get("mp4", {}).get("max")
-
-                # Force https
-                if webm_480: webm_480 = force_https(webm_480)
-                if webm_max: webm_max = force_https(webm_max)
-                if mp4_480: mp4_480 = force_https(mp4_480)
-                if mp4_max: mp4_max = force_https(mp4_max)
-
-                if webm_max:
-                    media.append(webm_max)
-                elif mp4_max:
-                    media.append(mp4_max)
-                elif webm_480:
-                    media.append(webm_480)
-                elif mp4_480:
-                    media.append(mp4_480)
-                else:
-                    thumb = movie.get("thumbnail")
-                    if thumb:
-                        media.append(force_https(thumb))
-
-    return render_template(
-        "detail.html",
-        game=game_data,
-        analysis=analysis,
-        pos_percent=pos_percent,
-        total_reviews=total_reviews,
-        playtime_distribution=playtime_distribution,
-        player_growth=player_growth,
-        player_growth_available=player_growth_available,
-        media=media
-    )
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
