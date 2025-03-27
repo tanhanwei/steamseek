@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSONL File Splitter</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        #controls, #status, #downloadLinks {
+            margin-bottom: 15px;
+        }
+        label {
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        input[type="file"], select, button {
+            padding: 8px 12px;
+            margin-right: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #status {
+            color: #555;
+            font-style: italic;
+        }
+        #downloadLinks a {
+            display: block;
+            margin-bottom: 8px;
+            padding: 10px 15px;
+            background-color: #e9ecef;
+            color: #007bff;
+            text-decoration: none;
+            border-radius: 4px;
+            border: 1px solid #ced4da;
+            transition: background-color 0.2s ease;
+        }
+        #downloadLinks a:hover {
+            background-color: #d6dce1;
+            color: #0056b3;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>JSONL File Splitter</h1>
+
+    <div id="controls">
+        <label for="fileInput">Upload JSONL file:</label>
+        <input type="file" id="fileInput" accept=".jsonl">
+
+        <label for="numParts">Split into:</label>
+        <select id="numParts">
+            <option value="2">2 parts</option>
+            <option value="3">3 parts</option>
+            <option value="4">4 parts</option>
+            <option value="5" selected>5 parts</option>
+            <option value="6">6 parts</option>
+            <option value="7">7 parts</option>
+            <option value="8">8 parts</option>
+            <option value="9">9 parts</option>
+            <option value="10">10 parts</option>
+        </select>
+
+        <button id="splitButton">Split and Generate Downloads</button>
+    </div>
+
+    <div id="status">Select a file and the number of parts, then click the button.</div>
+    <div id="downloadLinks"></div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const numPartsSelect = document.getElementById('numParts');
+        const splitButton = document.getElementById('splitButton');
+        const statusDiv = document.getElementById('status');
+        const downloadLinksDiv = document.getElementById('downloadLinks');
+
+        splitButton.addEventListener('click', handleFileSplit);
+
+        function handleFileSplit() {
+            // Clear previous results and status
+            statusDiv.textContent = 'Processing...';
+            statusDiv.className = ''; // Reset class
+            downloadLinksDiv.innerHTML = '';
+
+            const file = fileInput.files[0];
+            const numParts = parseInt(numPartsSelect.value, 10);
+
+            // --- Input Validation ---
+            if (!file) {
+                showError('Please select a file first.');
+                return;
+            }
+
+            if (!file.name.toLowerCase().endsWith('.jsonl')) {
+                showError('Please select a valid .jsonl file.');
+                return;
+            }
+
+            if (isNaN(numParts) || numParts < 1 || numParts > 10) {
+                showError('Invalid number of parts selected.');
+                return;
+            }
+
+            // --- File Reading ---
+            const reader = new FileReader();
+
+            reader.onload = function(event) {
+                try {
+                    const fileContent = event.target.result;
+                    // Split into lines, filtering out potential empty lines (e.g., trailing newline)
+                    const lines = fileContent.split('\n').filter(line => line.trim() !== '');
+
+                    if (lines.length === 0) {
+                       showError('The file appears to be empty.');
+                       return;
+                    }
+
+                    statusDiv.textContent = `File read successfully. Total lines: ${lines.length}. Splitting into ${numParts} parts...`;
+
+                    // --- Splitting Logic ---
+                    const totalLines = lines.length;
+                    // Use Math.ceil to ensure all lines are included, even if the last part is smaller
+                    const linesPerPart = Math.ceil(totalLines / numParts);
+
+                    const baseFileName = file.name.replace(/\.jsonl$/i, ''); // Remove .jsonl extension
+
+                    for (let i = 0; i < numParts; i++) {
+                        const start = i * linesPerPart;
+                        const end = start + linesPerPart;
+                        // Slice the lines for the current part
+                        const partLines = lines.slice(start, end);
+
+                        // Only create a download if there are lines in this part
+                        if (partLines.length > 0) {
+                            const partContent = partLines.join('\n'); // Join lines back with newline
+                            const partNumber = i + 1;
+                            const partFileName = `${baseFileName}_part_${partNumber}_of_${numParts}.jsonl`;
+
+                            createDownloadLink(partContent, partFileName, partNumber);
+                        }
+                    }
+                     if (downloadLinksDiv.children.length > 0) {
+                        statusDiv.textContent = `File split complete. Download links generated below.`;
+                     } else {
+                         showError('No parts could be generated (perhaps the file was empty after processing?).');
+                     }
+
+
+                } catch (error) {
+                    showError(`An error occurred during processing: ${error.message}`);
+                    console.error("Processing error:", error);
+                }
+            };
+
+            reader.onerror = function(event) {
+                showError(`Error reading file: ${reader.error}`);
+                console.error("File reading error:", reader.error);
+            };
+
+            reader.readAsText(file); // Start reading the file as text
+        }
+
+        function createDownloadLink(content, filename, partNumber) {
+            // Create a Blob (Binary Large Object) with the content
+            // Use 'text/plain' for broad compatibility, or 'application/x-jsonlines' if specificity is needed
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+
+            // Create a temporary URL for the Blob
+            const url = URL.createObjectURL(blob);
+
+            // Create a link element
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename; // Set the filename for download
+            link.textContent = `Download Part ${partNumber} (${filename})`;
+
+            // Append the link to the container
+            downloadLinksDiv.appendChild(link);
+
+            // Optional: Revoke the object URL after a delay or on link click
+            // URL.revokeObjectURL(url); // Be cautious with immediate revoke if downloads are slow
+            // For simplicity, relying on browser garbage collection when the page/tab closes is often sufficient.
+        }
+
+        function showError(message) {
+            statusDiv.textContent = message;
+            statusDiv.className = 'error'; // Apply error styling
+        }
+
+    </script>
+
+</body>
+</html>

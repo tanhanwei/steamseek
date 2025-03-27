@@ -101,7 +101,7 @@ def show_search_page(index_map: Dict[int, int], summaries_dict: Dict[int, Dict[s
     query = st.text_input("Enter search keywords here:")
     if query:
         st.write(f"**Search Results** for '{query}':")
-        results = semantic_search_query(query, top_k=20)
+        results = semantic_search_query(query, top_k=50)
         if not results:
             st.write("No matches found.")
             return

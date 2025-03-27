@@ -65,7 +65,7 @@ def save_analysis_cache(cache: dict, file_path: str):
 def perform_search(query, selected_genre="All", selected_year="All", selected_platform="All", selected_price="All", sort_by="Relevance"):
     results = []
     summaries_dict = load_summaries(SUMMARIES_FILE)
-    raw_results = semantic_search_query(query, top_k=20)
+    raw_results = semantic_search_query(query, top_k=50)
     if raw_results:
         for r in raw_results:
             appid = r.get("appid")
