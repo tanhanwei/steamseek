@@ -220,7 +220,7 @@ Output ONLY a JSON object with the following exact structure:
 - "ranked_appids": A list of integers representing the game AppIDs in the newly ranked order. Make sure to include ALL AppIDs from the input, with no duplicates.
 - "ranking_comment": Your concise reasoning for the ranking decision.
 
-IMPORTANT: AppIDs must be integers, not strings. No duplicate AppIDs are allowed.
+IMPORTANT: AppIDs must be integers, not strings. No duplicate AppIDs are allowed. Do not include any made-up or invalid AppIDs.
 Do not include any other text, preamble, or explanation outside the JSON structure."""
 
     # Construct the candidate part of the prompt separately for clarity
@@ -244,7 +244,7 @@ Do not include any other text, preamble, or explanation outside the JSON structu
 Games to re-rank:
 {joined_candidate_texts}
 
-Generate the JSON object containing the re-ranked AppIDs and your ranking comment based on relevance to the query. Remember that all AppIDs must be integers, not strings, and there should be no duplicates."""
+Generate the JSON object containing the re-ranked AppIDs and your ranking comment based on relevance to the query. Remember that all AppIDs must be integers, not strings, and there should be no duplicates. Only include the AppIDs from the list above."""
 
     # ---- Make the API Call ----
     headers = {
@@ -289,9 +289,18 @@ Generate the JSON object containing the re-ranked AppIDs and your ranking commen
             print(f"Response structure: {result}")
             return None, error_msg
 
-        # Parse the JSON response
+        # Parse the JSON response with enhanced error handling
         try:
             print("Parsing LLM response as JSON...")
+            # First, try to clean up the JSON if it's malformed
+            # Remove any trailing commas or other common JSON formatting issues
+            content = content.strip()
+            # Remove any text outside the JSON object
+            if content.find('{') >= 0 and content.rfind('}') >= 0:
+                start_idx = content.find('{')
+                end_idx = content.rfind('}') + 1
+                content = content[start_idx:end_idx]
+                
             analysis = json.loads(content)
             print(f"Parsed response: {json.dumps(analysis, indent=2)}")
         except json.JSONDecodeError as e:
@@ -306,14 +315,18 @@ Generate the JSON object containing the re-ranked AppIDs and your ranking commen
 
         # Basic validation and type conversion
         try:
-            # Convert any string appids to integers
+            # Convert any string appids to integers and filter out invalid values
             processed_ranked_appids = []
             for appid in ranked_appids:
-                if isinstance(appid, str):
-                    processed_ranked_appids.append(int(appid))
-                elif isinstance(appid, int):
-                    processed_ranked_appids.append(appid)
-                else:
+                try:
+                    # Try to convert to integer and validate it's a reasonable AppID
+                    appid_int = int(appid)
+                    # Filter out unreasonable AppIDs (too small or too large)
+                    if 1 <= appid_int <= 10000000:  # Steam AppIDs are typically in this range
+                        processed_ranked_appids.append(appid_int)
+                    else:
+                        print(f"WARNING: Skipping invalid AppID (out of range): {appid}")
+                except (ValueError, TypeError):
                     print(f"WARNING: Skipping non-integer/non-string appid: {appid}")
                     
             # Remove duplicates while preserving order
@@ -457,6 +470,374 @@ Return only the JSON with optimized search keywords and a brief explanation.
         print(f"ERROR during query optimization: {e}")
         # Fall back to original query if optimization fails
         return original_query, f"Error: {str(e)}"
+
+
+def deep_search_generate_variations(query: str, model: str = MODEL) -> List[str]:
+    """
+    Uses the LLM to generate a list of search keyword variations based on the original query.
+    These variations will be used for multiple search rounds.
+    
+    Args:
+        query: The user's original search query
+        model: The identifier for the LLM model to use
+        
+    Returns:
+        A list of search keyword variations
+    """
+    print(f"\n------ DEEP SEARCH: GENERATING VARIATIONS ------")
+    print(f"Original query: '{query}'")
+    
+    system_prompt = """You are a video game search expert for Steam games. 
+Your task is to generate a list of search keyword variations based on the user's original query.
+These variations should help find relevant games that might not be directly matched by the original query.
+
+For each variation, think about:
+1. Different ways to express the same concept
+2. Related gameplay mechanics or themes
+3. Specific games that match the description
+4. Combinations of game genres and mechanics
+
+Return ONLY a JSON object with this exact structure:
+{
+  "variations": [
+    "search variation 1",
+    "search variation 2",
+    "search variation 3",
+    "search variation 4",
+    "search variation 5"
+  ]
+}
+
+Each variation should be a short string (2-5 words) that would be effective for finding games related to the query.
+Include 5-6 variations total. Do not include explanations, just the keyword variations.
+"""
+
+    user_prompt = f"""Generate search keyword variations for the following user query about games:
+"{query}"
+
+Return JSON with 5-6 keyword variations that would help find relevant games.
+"""
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://your-site.com",
+        "X-Title": "SteamSeek Deep Search"
+    }
+
+    data = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "response_format": {"type": "json_object"}
+    }
+
+    print("Calling LLM to generate search variations...")
+    
+    try:
+        response = requests.post(OPENROUTER_API_URL, headers=headers, data=json.dumps(data), timeout=30)
+        
+        if response.status_code != 200:
+            print(f"ERROR: OpenRouter API returned status {response.status_code}")
+            return [query]  # Return original query if API call fails
+            
+        result = response.json()
+        content = result["choices"][0]["message"]["content"]
+        
+        # Parse the response - handle potential JSON issues
+        try:
+            # Clean up content if needed
+            content = content.strip()
+            # Extract just the JSON part if there's extra text
+            if content.find('{') >= 0 and content.rfind('}') >= 0:
+                start_idx = content.find('{')
+                end_idx = content.rfind('}') + 1
+                content = content[start_idx:end_idx]
+                
+            variations_data = json.loads(content)
+            
+            # Extract variations from the response
+            if isinstance(variations_data, dict) and "variations" in variations_data:
+                if isinstance(variations_data["variations"], list):
+                    # If variations is a list of strings
+                    if all(isinstance(v, str) for v in variations_data["variations"]):
+                        keyword_variations = variations_data["variations"]
+                    # If variations is a list of objects
+                    else:
+                        keyword_variations = []
+                        for item in variations_data["variations"]:
+                            if isinstance(item, dict) and "keywords" in item:
+                                keyword_variations.append(item["keywords"])
+                            elif isinstance(item, str):
+                                keyword_variations.append(item)
+                else:
+                    print("Unexpected variations format in LLM response")
+                    keyword_variations = [query]
+            else:
+                print("Expected 'variations' key not found in LLM response")
+                keyword_variations = [query]
+        except json.JSONDecodeError as e:
+            print(f"JSON parsing error: {e}")
+            print(f"Raw content: {content}")
+            keyword_variations = [query]
+        except Exception as e:
+            print(f"Error processing variations: {e}")
+            keyword_variations = [query]
+            
+        # Filter out empty or very short variations
+        keyword_variations = [v for v in keyword_variations if v and len(v) > 2]
+        
+        # Add some specific game titles that might be relevant (if not already included)
+        # These are common games that have destructible environments and crafting
+        relevant_game_titles = ["Teardown", "7 Days to Die", "Space Engineers", "Minecraft"]
+        for title in relevant_game_titles:
+            if not any(title.lower() in v.lower() for v in keyword_variations):
+                keyword_variations.append(title)
+        
+        print(f"Generated {len(keyword_variations)} search variations:")
+        for i, variation in enumerate(keyword_variations, 1):
+            print(f"  {i}. '{variation}'")
+        
+        # If no variations were generated, use the original query
+        if not keyword_variations:
+            keyword_variations = [query]
+            
+        print("------ VARIATION GENERATION COMPLETE ------\n")
+        return keyword_variations
+        
+    except Exception as e:
+        print(f"ERROR during variation generation: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return [query]  # Return original query if there's an error
+
+
+def deep_search_generate_summary(query: str, combined_results: List[Dict[str, Any]], model: str = MODEL) -> Tuple[List[int], str]:
+    """
+    Takes all search results from multiple rounds and:
+    1. Reranks them based on relevance to the original query
+    2. Generates a summary of the search results
+    
+    Args:
+        query: The original user query
+        combined_results: A list of dictionaries with game information
+        model: The identifier for the LLM model to use
+        
+    Returns:
+        A tuple containing:
+        - A list of appids in the new ranking order
+        - A markdown summary of the search results
+    """
+    print(f"\n------ DEEP SEARCH: GENERATING FINAL SUMMARY AND RANKING ------")
+    print(f"Original query: '{query}'")
+    print(f"Total games to analyze: {len(combined_results)}")
+    
+    # Prepare a condensed version of the results to send to the LLM
+    # We need to limit the size of the prompt
+    condensed_results = []
+    for i, game in enumerate(combined_results):
+        appid = game.get("appid")
+        name = game.get("name", "Unknown")
+        ai_summary = game.get("ai_summary", "")
+        genres = game.get("genres", [])
+        
+        # Truncate summaries if they're too long
+        if len(ai_summary) > 200:
+            ai_summary = ai_summary[:200] + "..."
+            
+        condensed_results.append({
+            "index": i,
+            "appid": appid,
+            "name": name,
+            "genres": genres,
+            "summary": ai_summary
+        })
+    
+    # If there are too many results, sample them to avoid overwhelming the LLM
+    MAX_RESULTS_FOR_LLM = 75
+    if len(condensed_results) > MAX_RESULTS_FOR_LLM:
+        import random
+        # Keep a random sample but ensure the first 20 are included
+        # (since these are likely the most relevant)
+        sampled_results = condensed_results[:20]
+        remaining_sample = random.sample(condensed_results[20:], min(MAX_RESULTS_FOR_LLM - 20, len(condensed_results) - 20))
+        condensed_results = sampled_results + remaining_sample
+        print(f"Sampling {len(condensed_results)} out of {len(combined_results)} results for summary generation")
+    
+    system_prompt = """You are an expert video game analyst and curator for Steam games.
+
+Your task is to analyze search results from multiple queries and:
+1. Re-rank them by relevance to the original user query
+2. Provide an insightful summary of the search results
+
+The user has searched for games using various keyword combinations. 
+You now need to analyze the provided games and create the best possible response.
+
+Return ONLY a JSON object with this exact structure:
+{
+  "ranked_appids": [appid1, appid2, ...],
+  "grand_summary": "A comprehensive markdown-formatted summary of the search results"
+}
+
+Your grand_summary should:
+- Be formatted in markdown with headers and bullet points
+- Identify patterns, categories, or themes in the results
+- Highlight the most relevant games and why they match
+- Be around 150-300 words in length
+- Focus on being genuinely helpful to someone looking for these types of games
+
+The ranked_appids should represent the most relevant games first, based solely on the original query.
+"""
+
+    user_prompt = f"""Original user query: "{query}"
+
+Here are games found across multiple search variations:
+{json.dumps(condensed_results, indent=2)[:15000]}  
+
+Analyze these results and return:
+1. A ranking of the AppIDs based on relevance to the original query
+2. A grand summary in markdown format that helps the user understand what kinds of games were found
+
+Focus only on the most relevant games to the original query: "{query}"
+"""
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://your-site.com",
+        "X-Title": "SteamSeek Deep Search Summary"
+    }
+
+    data = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "response_format": {"type": "json_object"}
+    }
+
+    print("Calling LLM to generate final summary and ranking...")
+    
+    try:
+        response = requests.post(OPENROUTER_API_URL, headers=headers, data=json.dumps(data), timeout=45)
+        
+        if response.status_code != 200:
+            print(f"ERROR: OpenRouter API returned status {response.status_code}")
+            return [r["appid"] for r in combined_results], "Error generating summary. Please try again."
+            
+        result = response.json()
+        content = result["choices"][0]["message"]["content"]
+        
+        # Parse the response with error handling
+        try:
+            # Clean up content if needed
+            content = content.strip()
+            # Extract just the JSON part if there's extra text
+            if content.find('{') >= 0 and content.rfind('}') >= 0:
+                start_idx = content.find('{')
+                end_idx = content.rfind('}') + 1
+                content = content[start_idx:end_idx]
+                
+            analysis = json.loads(content)
+            
+            ranked_appids = analysis.get("ranked_appids", [])
+            grand_summary = analysis.get("grand_summary", "No summary was generated.")
+            
+            # Validate and process the appids
+            processed_appids = []
+            for appid in ranked_appids:
+                try:
+                    appid_int = int(appid)
+                    if 1 <= appid_int <= 10000000:  # Filter out unreasonable AppIDs
+                        processed_appids.append(appid_int)
+                except (ValueError, TypeError):
+                    print(f"Skipping invalid AppID in summary response: {appid}")
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_appids = []
+            for appid in processed_appids:
+                if appid not in seen:
+                    seen.add(appid)
+                    unique_appids.append(appid)
+            
+            ranked_appids = unique_appids
+            
+            # If we don't get valid AppIDs back, use the original order
+            if not ranked_appids:
+                print("No valid ranking returned, using original order")
+                ranked_appids = [r["appid"] for r in combined_results]
+                
+            print(f"Generated summary ({len(grand_summary)} chars) and ranking ({len(ranked_appids)} games)")
+            print("------ SUMMARY GENERATION COMPLETE ------\n")
+            
+            return ranked_appids, grand_summary
+            
+        except json.JSONDecodeError as e:
+            print(f"JSON parsing error in summary: {e}")
+            print(f"Raw content: {content}")
+            return [r["appid"] for r in combined_results], f"Found {len(combined_results)} games related to your search. We couldn't generate a complete summary due to a technical issue."
+        
+    except Exception as e:
+        print(f"ERROR during summary generation: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return original order and error message if there's an exception
+        return [r["appid"] for r in combined_results], f"Found {len(combined_results)} games related to your search. We couldn't generate a complete summary due to a technical issue: {str(e)}"
+
+
+def generate_completion(prompt: str, model: str = MODEL, max_tokens: int = 100) -> str:
+    """
+    Generate a simple text completion using the LLM.
+    
+    Args:
+        prompt: The input text prompt for the LLM.
+        model: The identifier for the LLM model to use on OpenRouter.
+        max_tokens: Maximum tokens to generate in the response.
+        
+    Returns:
+        A string containing the generated text, or None if an error occurs.
+    """
+    print(f"Generating completion for prompt: {prompt[:50]}...")
+    
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://your-site.com",  # Optional; update with your site
+        "X-Title": "Steam Seek"                 # Optional title 
+    }
+    
+    data = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant. Respond directly and concisely to the user's request."
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "max_tokens": max_tokens
+    }
+    
+    try:
+        response = requests.post(OPENROUTER_API_URL, headers=headers, data=json.dumps(data))
+        if response.status_code == 200:
+            result = response.json()
+            # Extract the content from the first choice
+            content = result["choices"][0]["message"]["content"]
+            return content.strip()
+        else:
+            print(f"LLM API request failed with status {response.status_code}: {response.text}")
+            return None
+    except Exception as e:
+        print(f"Exception during LLM request: {e}")
+        return None
 
 
 # When called externally (e.g., from game_dashboard.py), call generate_game_analysis(game_data)

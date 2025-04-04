@@ -1,0 +1,430 @@
+{% extends "base_with_sidebar.html" %}
+{% block title %}{{ list.name }} - Steam Seek{% endblock %}
+
+{% block main_content %}
+<div class="container">
+  <!-- List Title - View/Edit Toggle -->
+  <div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center">
+      <div class="flex-grow-1">
+        <!-- View Mode -->
+        <div id="listTitleView" class="d-flex align-items-center">
+          <h1 class="me-2">{{ list.name }}</h1>
+          <button type="button" class="btn btn-sm btn-outline-secondary edit-toggle" data-target="listTitle">
+            <i class="bi bi-pencil"></i>
+          </button>
+        </div>
+        <!-- Edit Mode (initially hidden) -->
+        <div id="listTitleEdit" style="display: none;">
+          <div class="input-group mb-2">
+            <input type="text" id="listTitleInput" class="form-control" value="{{ list.name }}">
+            <button class="btn btn-success save-edit" data-target="listTitle" data-field="name" type="button">Save</button>
+            <button class="btn btn-outline-secondary cancel-edit" data-target="listTitle" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
+      <a href="{{ url_for('user_lists') }}" class="btn btn-secondary">Back to Lists</a>
+    </div>
+  </div>
+  
+  <!-- List Description - View/Edit Toggle -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="card-title mb-0">Description</h5>
+        <button type="button" class="btn btn-sm btn-outline-secondary edit-toggle" data-target="listDescription">
+          <i class="bi bi-pencil"></i>
+        </button>
+      </div>
+      
+      <!-- View Mode -->
+      <div id="listDescriptionView">
+        {% if list.description %}
+          <p>{{ list.description }}</p>
+        {% else %}
+          <p class="text-muted fst-italic">No description added yet. Click the edit button to add one.</p>
+        {% endif %}
+      </div>
+      
+      <!-- Edit Mode (initially hidden) -->
+      <div id="listDescriptionEdit" style="display: none;">
+        <div class="mb-3">
+          <textarea id="listDescriptionInput" class="form-control" rows="3">{{ list.description|default('', true) }}</textarea>
+        </div>
+        <div class="d-flex justify-content-end">
+          <button class="btn btn-success save-edit me-2" data-target="listDescription" data-field="description" type="button">Save</button>
+          <button class="btn btn-outline-secondary cancel-edit" data-target="listDescription" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- List Notes - View/Edit Toggle -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="card-title mb-0">Notes</h5>
+        <button type="button" class="btn btn-sm btn-outline-secondary edit-toggle" data-target="listNotes">
+          <i class="bi bi-pencil"></i>
+        </button>
+      </div>
+      
+      <!-- View Mode -->
+      <div id="listNotesView">
+        {% if list.notes %}
+          <div class="notes-content">{{ list.notes|markdown }}</div>
+        {% else %}
+          <p class="text-muted fst-italic">No notes added yet. Click the edit button to add some.</p>
+        {% endif %}
+      </div>
+      
+      <!-- Edit Mode (initially hidden) -->
+      <div id="listNotesEdit" style="display: none;">
+        <div class="mb-3">
+          <textarea id="listNotesInput" class="form-control" rows="6">{{ list.notes|default('', true) }}</textarea>
+          <small class="text-muted">Markdown formatting is supported.</small>
+        </div>
+        <div class="d-flex justify-content-end">
+          <button class="btn btn-success save-edit me-2" data-target="listNotes" data-field="notes" type="button">Save</button>
+          <button class="btn btn-outline-secondary cancel-edit" data-target="listNotes" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  
+  {% if games %}
+    <!-- Sorting and Filtering Controls -->
+    <div class="card mb-4">
+      <div class="card-body">
+        <form id="sortFilterForm" method="get" action="{{ url_for('view_list', list_id=list.id) }}">
+          <div class="row align-items-center">
+            <div class="col-md-6">
+              <div class="row g-2">
+                <div class="col-auto">
+                  <label for="sort-select" class="col-form-label">Sort by</label>
+                </div>
+                <div class="col-auto">
+                  <select id="sort-select" name="sort_by" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="name" {% if sort_by == 'name' %}selected{% endif %}>Name</option>
+                    <option value="date_added" {% if sort_by == 'date_added' %}selected{% endif %}>Date Added</option>
+                    <option value="price" {% if sort_by == 'price' %}selected{% endif %}>Price</option>
+                    <option value="release_year" {% if sort_by == 'release_year' %}selected{% endif %}>Release Year</option>
+                  </select>
+                </div>
+                <div class="col-auto">
+                  <select id="order-select" name="order" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
+                    <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="released-toggle" name="released_only" value="true" {% if show_released_only %}checked{% endif %} onchange="this.form.submit()">
+                <label class="form-check-label" for="released-toggle">Show released games only</label>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+    
+    <div class="row">
+      {% for game in games %}
+        <div class="col-md-6 mb-3">
+          <div class="card">
+            <!-- Bootstrap Carousel for each result -->
+            <div id="carousel-{{ game.appid }}" class="carousel slide">
+              <div class="carousel-inner">
+                {% if game.media and game.media|length > 0 %}
+                  {% for item in game.media %}
+                    {% set lower_item = item|lower %}
+                    <div class="carousel-item {% if loop.first %}active{% endif %}">
+                      {% if 'webm' in lower_item %}
+                        <video class="d-block w-100" controls>
+                          <source src="{{ item }}" type="video/webm">
+                          Your browser does not support the video tag.
+                        </video>
+                      {% elif 'mp4' in lower_item %}
+                        <video class="d-block w-100" controls>
+                          <source src="{{ item }}" type="video/mp4">
+                          Your browser does not support the video tag.
+                        </video>
+                      {% else %}
+                        <img src="{{ item }}" class="d-block w-100" alt="{{ game.name }}">
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                {% else %}
+                  <!-- Default placeholder image if no media is available -->
+                  <div class="carousel-item active">
+                    <div style="height: 200px; background-color: #eee; display: flex; align-items: center; justify-content: center;">
+                      <span class="text-muted">No image available</span>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+              {% if game.media and game.media|length > 1 %}
+                <button class="carousel-control-prev" type="button" data-bs-target="#carousel-{{ game.appid }}" data-bs-slide="prev">
+                  <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                  <span class="visually-hidden">Previous</span>
+                </button>
+                <button class="carousel-control-next" type="button" data-bs-target="#carousel-{{ game.appid }}" data-bs-slide="next">
+                  <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                  <span class="visually-hidden">Next</span>
+                </button>
+              {% endif %}
+            </div>
+            <div class="card-body">
+              <h5 class="card-title d-flex justify-content-between align-items-center">
+                <a href="https://store.steampowered.com/app/{{ game.appid }}/" target="_blank" style="text-decoration: none; color: inherit;">
+                  {{ game.name }}
+                </a>
+                <!-- Remove from List Button -->
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="if(confirm('Remove this game from the list?')) document.getElementById('removeForm-{{ game.appid }}').submit();">
+                  <i class="bi bi-trash"></i> Remove
+                </button>
+                <form id="removeForm-{{ game.appid }}" method="post" action="{{ url_for('remove_game_from_list', list_id=list.id, appid=game.appid) }}" style="display: none;"></form>
+              </h5>
+              <p class="card-text">
+                {% if game.genres %}
+                  <small>Genres: {{ game.genres|join(', ') }}</small><br>
+                {% endif %}
+                <small>Release Year: <span class="{% if not game.is_released %}text-warning{% endif %}">{{ game.release_year }}</span></small><br>
+                <small>Price: {% if game.is_free %}Free{% else %}${{ game.price }}{% endif %}</small><br>
+                {% if game.pos_percent is defined %}
+                  <small>Positive: {{ game.pos_percent|round(0) }}%</small><br>
+                {% endif %}
+                {% if game.total_reviews is defined %}
+                  <small>Reviews: {{ game.total_reviews }}</small>
+                {% endif %}
+              </p>
+              {% if game.ai_summary %}
+                <p>
+                  <a class="btn btn-secondary" data-bs-toggle="collapse" href="#summary-{{ game.appid }}" role="button" aria-expanded="false" aria-controls="summary-{{ game.appid }}">
+                    Show AI Summary
+                  </a>
+                </p>
+                <div class="collapse" id="summary-{{ game.appid }}">
+                  <div class="card card-body">
+                    {{ game.ai_summary|markdown }}
+                    
+                    {% if not game.ai_summary|markdown or game.ai_summary|markdown == game.ai_summary %}
+                      <hr>
+                      <p class="text-danger">Markdown filter issue detected. Raw summary:</p>
+                      <pre class="bg-light p-2">{{ game.ai_summary }}</pre>
+                    {% endif %}
+                  </div>
+                </div>
+              {% endif %}
+              <div class="d-flex gap-2 mt-2">
+                <a href="{{ url_for('detail', appid=game.appid) }}" class="btn btn-primary show-loader">Analyze</a>
+                <a href="https://www.youtube.com/results?search_query={{ game.name|replace(' ', '+') }}+gameplay" target="_blank" class="btn btn-danger">YouTube</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="alert alert-info">
+      <p>This list doesn't have any games yet. Add games from the search page!</p>
+      <a href="{{ url_for('search') }}" class="btn btn-primary">Search Games</a>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    // Initialize all carousels
+    var carousels = document.querySelectorAll('.carousel');
+    carousels.forEach(function(carousel) {
+      new bootstrap.Carousel(carousel, {
+        interval: false // Prevent auto-cycling
+      });
+      console.log('Initialized carousel:', carousel.id);
+    });
+    
+    // Initialize all collapse elements for AI summaries
+    var collapseElements = document.querySelectorAll('[data-bs-toggle="collapse"]');
+    collapseElements.forEach(function(collapseEl) {
+      collapseEl.addEventListener('click', function() {
+        var targetId = this.getAttribute('href');
+        var targetEl = document.querySelector(targetId);
+        console.log('Toggling collapse element:', targetId);
+      });
+    });
+
+    // ----- List Metadata Edit Functionality -----
+    
+    // Toggle Edit Mode
+    document.querySelectorAll('.edit-toggle').forEach(function(button) {
+      button.addEventListener('click', function() {
+        const target = this.getAttribute('data-target');
+        // Toggle visibility of view and edit modes
+        document.getElementById(`${target}View`).style.display = 'none';
+        document.getElementById(`${target}Edit`).style.display = 'block';
+      });
+    });
+    
+    // Cancel Edit
+    document.querySelectorAll('.cancel-edit').forEach(function(button) {
+      button.addEventListener('click', function() {
+        const target = this.getAttribute('data-target');
+        // Toggle visibility of view and edit modes
+        document.getElementById(`${target}View`).style.display = 'block';
+        document.getElementById(`${target}Edit`).style.display = 'none';
+        
+        // Reset input to original value
+        const field = document.querySelector(`#${target}Edit`).querySelector('input, textarea');
+        if (field) {
+          field.value = field.defaultValue;
+        }
+      });
+    });
+    
+    // Save Edit
+    document.querySelectorAll('.save-edit').forEach(function(button) {
+      button.addEventListener('click', function() {
+        const target = this.getAttribute('data-target');
+        const field = this.getAttribute('data-field');
+        const input = document.getElementById(`${target}Input`);
+        const value = input.value.trim();
+        
+        // Show saving indicator
+        button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...';
+        button.disabled = true;
+        
+        // Send update to server
+        fetch(`/api/update_list/{{ list.id }}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: JSON.stringify({
+            field: field,
+            value: value
+          })
+        })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+          }
+          return response.json();
+        })
+        .then(data => {
+          if (data.success) {
+            // Update the view with new value
+            if (field === 'name') {
+              // Update title in view mode
+              document.querySelector(`#${target}View h1`).textContent = value;
+              // Also update page title
+              document.title = `${value} - Steam Seek`;
+            } else if (field === 'description') {
+              // Update description in view mode
+              const viewEl = document.querySelector(`#${target}View`);
+              if (value) {
+                viewEl.innerHTML = `<p>${value}</p>`;
+              } else {
+                viewEl.innerHTML = `<p class="text-muted fst-italic">No description added yet. Click the edit button to add one.</p>`;
+              }
+            } else if (field === 'notes') {
+              // Update notes in view mode with rendered markdown
+              const viewEl = document.querySelector(`#${target}View`);
+              if (value) {
+                // Fetch rendered markdown from server
+                fetch(`/api/render_markdown`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ markdown: value })
+                })
+                .then(response => response.json())
+                .then(data => {
+                  if (data.html) {
+                    viewEl.innerHTML = `<div class="notes-content">${data.html}</div>`;
+                  }
+                });
+              } else {
+                viewEl.innerHTML = `<p class="text-muted fst-italic">No notes added yet. Click the edit button to add some.</p>`;
+              }
+            }
+            
+            // Save the value as the default value for the input
+            input.defaultValue = value;
+            
+            // Show toast notification
+            showToast('Success', 'List updated successfully', 'success');
+          } else {
+            showToast('Error', data.message || 'Failed to update list', 'danger');
+          }
+        })
+        .catch(error => {
+          console.error('Error updating list:', error);
+          showToast('Error', 'Failed to update list. Check console for details.', 'danger');
+        })
+        .finally(() => {
+          // Reset button state
+          button.innerHTML = 'Save';
+          button.disabled = false;
+          
+          // Switch back to view mode
+          document.getElementById(`${target}View`).style.display = 'block';
+          document.getElementById(`${target}Edit`).style.display = 'none';
+        });
+      });
+    });
+    
+    // Toast notification helper
+    function showToast(title, message, type) {
+      // Create toast container if it doesn't exist
+      let toastContainer = document.querySelector('.toast-container');
+      if (!toastContainer) {
+        toastContainer = document.createElement('div');
+        toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+        document.body.appendChild(toastContainer);
+      }
+      
+      // Create toast element
+      const toastEl = document.createElement('div');
+      toastEl.className = `toast align-items-center text-white bg-${type} border-0`;
+      toastEl.setAttribute('role', 'alert');
+      toastEl.setAttribute('aria-live', 'assertive');
+      toastEl.setAttribute('aria-atomic', 'true');
+      
+      toastEl.innerHTML = `
+        <div class="d-flex">
+          <div class="toast-body">
+            <strong>${title}:</strong> ${message}
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+      `;
+      
+      toastContainer.appendChild(toastEl);
+      
+      // Initialize and show the toast
+      const toast = new bootstrap.Toast(toastEl, { autohide: true, delay: 5000 });
+      toast.show();
+      
+      // Remove the toast after it's hidden
+      toastEl.addEventListener('hidden.bs.toast', function() {
+        toastEl.remove();
+      });
+    }
+  });
+</script>
+{% endblock %} 

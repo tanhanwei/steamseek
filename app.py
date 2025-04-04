@@ -1,17 +1,38 @@
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, Response, flash
 from markupsafe import Markup
 import os
 import json
 import logging
 import markdown  # pip install markdown
+import time
+from collections import OrderedDict
+from threading import Thread
+import uuid
+import requests
+import urllib.parse  # For URL encoding
+
+# Import Firebase and Flask-Login 
+from flask_login import LoginManager, login_user, login_required, logout_user, current_user
+from firebase_config import User, firebase_auth, db
 
 # Import our data loader and helper functions
 from data_loader import build_steam_data_index, load_summaries, get_game_data_by_appid
 from game_chatbot import semantic_search_query
-from llm_processor import generate_game_analysis, rerank_search_results, OPENROUTER_API_KEY, optimize_search_query
+from llm_processor import (generate_game_analysis, rerank_search_results, OPENROUTER_API_KEY, 
+                          optimize_search_query, deep_search_generate_variations, 
+                          deep_search_generate_summary)
 
 app = Flask(__name__)
-app.secret_key = "your-secret-key"  # Required for session support
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "your-secret-key")  # Required for session support
+
+# Initialize LoginManager
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'  # Specify the route for the login page
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.get(user_id)
 
 # --- Explicit Logger Configuration ---
 # Remove existing basicConfig if it causes conflicts, or adjust level
@@ -39,7 +60,13 @@ else:
 
 # Custom Jinja filter to render markdown as HTML
 def markdown_filter(text):
-    return Markup(markdown.markdown(text))
+    if not text:
+        return ""
+    try:
+        return Markup(markdown.markdown(text))
+    except Exception as e:
+        print(f"Error rendering markdown: {e}")
+        return Markup(f"<p>Error rendering markdown: {e}</p><pre>{text}</pre>")
 app.jinja_env.filters['markdown'] = markdown_filter
 
 # Define file paths
@@ -49,6 +76,21 @@ ANALYSIS_CACHE_FILE = "data/analysis_cache.jsonl"  # Detailed analysis cache for
 
 # TESTING flag for development - set to True to enable synthetic summaries for testing
 TESTING_ENABLE_SYNTHETIC_SUMMARIES = True
+
+# Deep Search background process state
+deep_search_status = {
+    "active": False,
+    "progress": 0,
+    "total_steps": 0,
+    "current_step": "",
+    "results": [],
+    "grand_summary": "",
+    "original_query": "",
+    "completed": False,
+    "error": None,
+    "session_id": None,  # Add a session ID to track which search process is current
+    "results_served": False  # Add a flag to track if results have been served to the client
+}
 
 # Build the index map once at startup
 logging.basicConfig(level=logging.INFO)
@@ -87,10 +129,248 @@ def save_analysis_cache(cache: dict, file_path: str):
         app.logger.error(f"Error saving analysis cache: {e}")
 
 #############################################
+# Helper function to run deep search in the background
+#############################################
+def deep_search_background_task(query, search_params):
+    global deep_search_status
+    
+    # Store the original query for reference and later matching
+    original_query = query.strip()
+    
+    # Generate a unique session ID for this search
+    session_id = str(uuid.uuid4())
+    deep_search_status["session_id"] = session_id
+    deep_search_status["original_query"] = original_query  # Make sure to set this explicitly
+    
+    try:
+        print(f"\n==== STARTING DEEP SEARCH FOR: '{original_query}' (Session: {session_id}) ====\n")
+        
+        # Step 1: Generate keyword variations
+        deep_search_status["current_step"] = "Generating search variations"
+        deep_search_status["progress"] = 10
+        variations = deep_search_generate_variations(original_query)
+        
+        # Check if the search is still valid (not cancelled or replaced)
+        if deep_search_status["session_id"] != session_id:
+            print(f"Deep search session {session_id} was replaced. Terminating.")
+            return
+            
+        # Include the original query as the first variation
+        if original_query not in variations:
+            variations.insert(0, original_query)
+        
+        # Limit the number of variations to prevent excessive API calls
+        MAX_VARIATIONS = 6
+        if len(variations) > MAX_VARIATIONS:
+            print(f"Limiting search variations from {len(variations)} to {MAX_VARIATIONS}")
+            variations = variations[:MAX_VARIATIONS]
+        
+        total_variations = len(variations)
+        deep_search_status["total_steps"] = total_variations + 2  # +2 for initial setup and final summary
+        
+        # Step 2: Run searches for each variation
+        combined_results = OrderedDict()  # Use OrderedDict to avoid duplicate games
+        successful_variations = 0  # Track how many variations were searched successfully
+        
+        for i, variation in enumerate(variations):
+            # Check if the search is still valid
+            if deep_search_status["session_id"] != session_id:
+                print(f"Deep search session {session_id} was replaced. Terminating.")
+                return
+                
+            step_num = i + 1  # +1 because we started at step 1 with variation generation
+            deep_search_status["progress"] = int(10 + (70 * step_num / total_variations))
+            deep_search_status["current_step"] = f"Searching with variation {step_num}/{total_variations}: '{variation}'"
+            
+            try:
+                # Get the search results for this variation
+                results, _ = perform_search(
+                    variation,
+                    search_params["genre"],
+                    search_params["year"],
+                    search_params["platform"],
+                    search_params["price"],
+                    "Relevance",  # Always use relevance sort for deep search variations
+                    False,  # Don't use AI Enhanced for variations
+                    False,  # Not a deep search (to avoid recursion)
+                    False,  # Don't need to save results to status (we'll combine them)
+                )
+                
+                # Add these results to our combined set, avoiding duplicates
+                for result in results:
+                    appid = result["appid"]
+                    if appid not in combined_results:
+                        combined_results[appid] = result
+                
+                successful_variations += 1
+            except Exception as e:
+                print(f"Error during search for variation '{variation}': {str(e)}")
+                import traceback
+                print(traceback.format_exc())
+                # Continue with the next variation
+            
+            # Short sleep to prevent rate limiting
+            time.sleep(0.5)
+        
+        # Check if the search is still valid
+        if deep_search_status["session_id"] != session_id:
+            print(f"Deep search session {session_id} was replaced. Terminating.")
+            return
+            
+        # Convert OrderedDict to list
+        all_results = list(combined_results.values())
+        
+        # If we didn't get any successful searches, report the error
+        if successful_variations == 0:
+            deep_search_status["error"] = "All search variations failed. Please try again."
+            deep_search_status["progress"] = 100
+            deep_search_status["current_step"] = "Failed to complete any searches"
+            deep_search_status["completed"] = True
+            deep_search_status["active"] = False
+            return
+        
+        # Step 3: Generate the summary and final ranking
+        deep_search_status["current_step"] = "Generating final summary and ranking"
+        deep_search_status["progress"] = 90
+        
+        if all_results:
+            try:
+                # Generate the summary and get the reranked order
+                # Important: Use the original query here, not a variation
+                ranked_appids, grand_summary = deep_search_generate_summary(original_query, all_results)
+                
+                # Check if the search is still valid
+                if deep_search_status["session_id"] != session_id:
+                    print(f"Deep search session {session_id} was replaced. Terminating.")
+                    return
+                
+                # Reorder the results based on the ranking
+                reranked_results = []
+                appid_to_result = {result["appid"]: result for result in all_results}
+                
+                # First add all the ranked appids in the specified order
+                for appid in ranked_appids:
+                    if appid in appid_to_result:
+                        reranked_results.append(appid_to_result[appid])
+                        
+                # Then add any remaining results that weren't in the ranking
+                for result in all_results:
+                    if result["appid"] not in ranked_appids:
+                        reranked_results.append(result)
+                        
+                # Update the status with the final results (only if this is still the active search)
+                if deep_search_status["session_id"] == session_id:
+                    deep_search_status["results"] = reranked_results
+                    deep_search_status["grand_summary"] = grand_summary
+                    # Double-check that the original_query is still properly set
+                    deep_search_status["original_query"] = original_query
+                    print(f"Final result count: {len(reranked_results)}, Grand summary length: {len(grand_summary)}")
+            except Exception as e:
+                print(f"Error generating final summary: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
+                
+                # If summary generation fails, still return the results but with a default message
+                if deep_search_status["session_id"] == session_id:
+                    deep_search_status["results"] = all_results
+                    deep_search_status["grand_summary"] = f"Found {len(all_results)} games matching your query. The summary generation encountered an error: {str(e)}"
+                    # Make sure original query is set
+                    deep_search_status["original_query"] = original_query
+        else:
+            if deep_search_status["session_id"] == session_id:
+                deep_search_status["results"] = []
+                deep_search_status["grand_summary"] = "No games found matching your query."
+                deep_search_status["original_query"] = original_query
+        
+        # Mark the search as completed (only if this is still the active search)
+        if deep_search_status["session_id"] == session_id:
+            deep_search_status["progress"] = 100
+            deep_search_status["current_step"] = "Completed"
+            deep_search_status["completed"] = True
+            deep_search_status["results_served"] = False  # Reset the served flag
+            print(f"\n==== DEEP SEARCH COMPLETED FOR: '{original_query}' (Session: {session_id}) ====\n")
+            print(f"Ready for viewing: query='{deep_search_status['original_query']}', result count={len(deep_search_status['results'])}")
+            
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        if deep_search_status["session_id"] == session_id:
+            deep_search_status["error"] = str(e)
+            deep_search_status["current_step"] = f"Error: {str(e)}"
+        print(f"Deep search error in session {session_id}: {str(e)}")
+        print(error_details)
+    finally:
+        # Only deactivate if this is still the current session
+        if deep_search_status["session_id"] == session_id:
+            deep_search_status["active"] = False
+
+#############################################
 # Search Helper with Filtering and Sorting
 #############################################
-def perform_search(query, selected_genre="All", selected_year="All", selected_platform="All", selected_price="All", sort_by="Relevance", use_ai_enhanced=False):
-    app.logger.info(f"--- Entering perform_search --- Query: '{query}', Sort By: '{sort_by}', AI Enhanced: {use_ai_enhanced}") # DEBUG
+def perform_search(query, selected_genre="All", selected_year="All", selected_platform="All", 
+                  selected_price="All", sort_by="Relevance", use_ai_enhanced=False, 
+                  use_deep_search=False, save_to_status=True, limit=50):
+    app.logger.info(f"--- Entering perform_search --- Query: '{query}', Sort By: '{sort_by}', AI Enhanced: {use_ai_enhanced}, Deep Search: {use_deep_search}") # DEBUG
+    
+    # Make sure the query is properly stripped of whitespace
+    query = query.strip()
+    
+    # If limit is None, set it to a default of 50
+    if limit is None:
+        limit = 50
+    
+    # If requesting a deep search, we'll start the background process and return empty results
+    if use_deep_search:
+        global deep_search_status
+        
+        # Check if we already have a completed deep search for this query that hasn't been served
+        if deep_search_status["completed"] and not deep_search_status["results_served"] and deep_search_status["original_query"].lower() == query.lower():
+            # Use the completed deep search results instead of starting a new search
+            print(f"Using existing completed deep search results for query: '{query}'")
+            return deep_search_status["results"], "Deep Search completed. Here are your results."
+        
+        # If a deep search is already running, just return empty results
+        if deep_search_status["active"]:
+            return [], "A Deep Search is already in progress."
+        
+        # Check if this is a restart of an identical search
+        if deep_search_status["completed"] and deep_search_status["original_query"].lower() == query.lower():
+            print(f"Preventing automatic restart of deep search for: '{query}'")
+            return [], "This search was already completed. Refresh the page to start a new deep search."
+        
+        # Reset deep search status with a completely new dictionary to prevent partial updates
+        deep_search_status.clear()
+        deep_search_status.update({
+            "active": True,
+            "progress": 0,
+            "total_steps": 0,
+            "current_step": "Initializing Deep Search",
+            "results": [],
+            "grand_summary": "",
+            "original_query": query,  # Set the original query
+            "completed": False,
+            "error": None,
+            "session_id": None,  # Will be set in the background task
+            "results_served": False  # Reset the served flag
+        })
+        
+        print(f"Initialized new deep search for: '{query}'")
+        
+        # Start the background task
+        search_params = {
+            "genre": selected_genre,
+            "year": selected_year,
+            "platform": selected_platform,
+            "price": selected_price,
+        }
+        thread = Thread(target=deep_search_background_task, args=(query, search_params))
+        thread.daemon = True
+        thread.start()
+        
+        # Return empty results - the client will poll for updates
+        return [], "Deep Search started. Please wait while we find the best results for you."
+    
+    # Regular search process
     summaries_dict = load_summaries(SUMMARIES_FILE)
     print(f"Perform search loaded {len(summaries_dict)} summaries") # NEW DEBUG
     
@@ -346,11 +626,337 @@ def perform_search(query, selected_genre="All", selected_year="All", selected_pl
         elif sort_by == "Positive Review % (High to Low)":
             final_results.sort(key=lambda x: x["pos_percent"], reverse=True)
 
-    # Optional: Limit the number of results returned to the template
-    # final_results = final_results[:max_results_to_display]
+    # Limit the final results based on the user's selection
+    if limit and limit < len(final_results):
+        app.logger.info(f"Limiting final results from {len(final_results)} to {limit}")
+        final_results = final_results[:limit]
+
+    # If this is a deep search and we need to save to status
+    if save_to_status and use_deep_search:
+        deep_search_status["results"] = final_results
 
     app.logger.info(f"--- Exiting perform_search --- Returning {len(final_results)} final results.") # DEBUG
     return final_results, optimization_explanation
+
+#############################################
+# Deep Search Status Route for AJAX polling
+#############################################
+@app.route("/deep_search_status")
+def get_deep_search_status():
+    """Returns the current status of a deep search as JSON for polling."""
+    global deep_search_status
+    
+    status_copy = dict(deep_search_status)  # Make a copy to avoid thread issues
+    
+    # If this status poll is for a completed search and it hasn't been
+    # marked as served yet, don't mark it as served here - let the main
+    # search route handle that when the user actually views the results
+    
+    # Add a client_friendly field to indicate search is ready for viewing
+    status_copy["ready_for_viewing"] = status_copy["completed"] and not status_copy["results_served"]
+    
+    # For security/performance reasons, don't include the full results
+    # in the status JSON (they can be large)
+    if "results" in status_copy:
+        # Just include the count instead of the full results
+        status_copy["result_count"] = len(status_copy["results"])
+        del status_copy["results"]
+    
+    # Print status when a search is ready for viewing
+    if status_copy["ready_for_viewing"]:
+        print(f"Deep search is ready for viewing: query='{status_copy.get('original_query', '')}', result_count={status_copy.get('result_count', 0)}")
+    
+    return jsonify(status_copy)
+
+#############################################
+# Authentication Routes
+#############################################
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error_message = None
+    if request.method == 'POST':
+        return redirect(url_for('auth_google'))
+    return render_template('login.html', error=error_message)
+
+@app.route('/auth/google')
+def auth_google():
+    """Start the Google OAuth flow by redirecting to Google sign-in page"""
+    # Generate a random state value for CSRF protection
+    state = str(uuid.uuid4())
+    session['oauth_state'] = state
+    
+    # Fix: Always use localhost in the redirect URI since that's what's configured in Google OAuth
+    client_id = os.environ.get('GOOGLE_CLIENT_ID')
+    
+    # IMPORTANT: Always use localhost, not 127.0.0.1, to match Google OAuth settings
+    # Even if the user is accessing via 127.0.0.1, we need to use localhost in the redirect
+    redirect_uri = "http://localhost:5000/auth/google/callback"
+    
+    # Print detailed debug information
+    print("\n=== GOOGLE AUTH DEBUG INFO ===")
+    print(f"Client ID: {client_id}")
+    print(f"Current Host: {request.host}")
+    print(f"Using Redirect URI: {redirect_uri}")
+    print(f"State: {state}")
+    print("===============================\n")
+
+    # URL encode parameters for the auth URL
+    params = {
+        'client_id': client_id,
+        'redirect_uri': redirect_uri,
+        'response_type': 'code',
+        'scope': 'email profile',
+        'state': state
+    }
+    encoded_params = urllib.parse.urlencode(params)
+    
+    # Build the auth URL with the correctly encoded parameters
+    auth_url = f"https://accounts.google.com/o/oauth2/auth?{encoded_params}"
+    
+    print(f"Full auth URL: {auth_url}")
+    
+    return redirect(auth_url)
+
+@app.route('/auth/google/callback')
+def auth_google_callback():
+    """Handle the callback from Google OAuth"""
+    # Verify state parameter to prevent CSRF attacks
+    if 'oauth_state' not in session or request.args.get('state') != session['oauth_state']:
+        flash('Authentication failed: Invalid state parameter.', 'danger')
+        return redirect(url_for('login'))
+    
+    # Check for error parameter from Google
+    if request.args.get('error'):
+        error = request.args.get('error')
+        print(f"OAuth error returned from Google: {error}")
+        flash(f'Authentication failed: {error}', 'danger')
+        return redirect(url_for('login'))
+    
+    # Exchange the authorization code for tokens
+    try:
+        code = request.args.get('code')
+        if not code:
+            flash('Authentication failed: No authorization code received.', 'danger')
+            return redirect(url_for('login'))
+        
+        print(f"\n=== GOOGLE AUTHENTICATION FLOW ===")
+        print(f"Received code from Google. Length: {len(code)}")
+            
+        # Exchange the code for tokens
+        token = exchange_code_for_token(code)
+        if not token:
+            flash('Authentication failed: Could not retrieve token from Google.', 'danger')
+            return redirect(url_for('login'))
+        
+        print(f"Token retrieved successfully. Length: {len(token)}")
+        
+        # Verify and use the token to get user info
+        user_info = verify_id_token(token)
+        if not user_info:
+            flash('Authentication failed: Could not verify user identity.', 'danger')
+            return redirect(url_for('login'))
+        
+        # Get required user information
+        uid = user_info.get('sub')
+        email = user_info.get('email')
+        name = user_info.get('name', email.split('@')[0] if email else 'User')
+        picture = user_info.get('picture', '')
+        
+        print(f"User information retrieved: ID={uid}, Email={email}, Name={name}")
+        
+        if not uid or not email:
+            flash('Authentication failed: Missing user information from Google.', 'danger')
+            return redirect(url_for('login'))
+            
+        # Create a User object
+        try:
+            user_obj = User(uid=uid, email=email, display_name=name, photo_url=picture)
+            
+            # Save user to Firestore
+            result = user_obj.create_or_update()
+            if result:
+                print(f"User saved to Firestore: {email}")
+            else:
+                print(f"Warning: Failed to save user to Firestore: {email}")
+                # Continue anyway - we can still log the user in
+                
+            # Log the user in with Flask-Login
+            login_user(user_obj)
+            print(f"User logged in successfully: {email}")
+            print(f"=================================\n")
+            
+            # Redirect to the home page
+            flash(f'Welcome, {name}!', 'success')
+            return redirect(url_for('search'))
+        except Exception as user_error:
+            print(f"Error creating user object: {user_error}")
+            import traceback
+            traceback.print_exc()
+            flash('Authentication failed: Error creating user account.', 'danger')
+            return redirect(url_for('login'))
+    except Exception as e:
+        print(f"Error in Google callback: {e}")
+        import traceback
+        traceback.print_exc()
+        flash('Authentication failed. Please try again.', 'danger')
+        return redirect(url_for('login'))
+
+def exchange_code_for_token(code):
+    """Exchange the authorization code for an ID token"""
+    try:
+        # Set up the proper OAuth token exchange with Google
+        token_url = 'https://oauth2.googleapis.com/token'
+        
+        # IMPORTANT: Always use localhost, not 127.0.0.1, to match Google OAuth settings
+        # The redirect_uri must match exactly what we sent in the auth request
+        redirect_uri = "http://localhost:5000/auth/google/callback"
+        
+        # Print debug information
+        print("\n=== TOKEN EXCHANGE DEBUG INFO ===")
+        print(f"Code: {code[:10]}... (truncated)")
+        print(f"Current Host: {request.host}")
+        print(f"Using Redirect URI: {redirect_uri}")
+        print("==================================\n")
+        
+        # Send request to Google to exchange code for tokens
+        data = {
+            'code': code,
+            'client_id': os.environ.get('GOOGLE_CLIENT_ID'),
+            'client_secret': os.environ.get('GOOGLE_CLIENT_SECRET'),
+            'redirect_uri': redirect_uri,
+            'grant_type': 'authorization_code'
+        }
+        
+        # URL encode all parameters properly
+        encoded_data = urllib.parse.urlencode(data)
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        
+        response = requests.post(token_url, data=encoded_data, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"Token exchange failed. Status: {response.status_code}")
+            print(f"Response: {response.text}")
+            return None
+            
+        token_data = response.json()
+        print(f"Token exchange successful. Available tokens:")
+        # Log which tokens we received (but don't print the actual values)
+        for key in token_data:
+            print(f"  - {key}: {'[present]' if token_data.get(key) else '[missing]'}")
+        
+        # Return the ID token or access token (many implementations use access token)
+        if 'id_token' in token_data:
+            return token_data.get('id_token')
+        elif 'access_token' in token_data:
+            # We can use the access token to fetch user info directly
+            return token_data.get('access_token')
+        else:
+            print("Error: No usable token found in the response")
+            return None
+    except Exception as e:
+        print(f"Error exchanging code for token: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def verify_id_token(token):
+    """Verify the token from Google and return the user's information.
+    This function handles both ID tokens and access tokens."""
+    try:
+        # Print debug information
+        print(f"\n=== TOKEN VERIFICATION ===")
+        print(f"Token received: {token[:20]}... (truncated)")
+        print(f"Token type appears to be: {'ID token' if len(token) > 500 else 'Access token'}")
+        
+        # First try to get user info directly from Google using the token
+        # This works for both access tokens and ID tokens
+        try:
+            if len(token) < 500:  # Likely an access token based on length
+                print("Using token as access token to fetch user info from Google")
+                # Use the access token to get user info
+                user_info_url = "https://www.googleapis.com/oauth2/v3/userinfo"
+                headers = {"Authorization": f"Bearer {token}"}
+                response = requests.get(user_info_url, headers=headers)
+                
+                if response.status_code == 200:
+                    user_data = response.json()
+                    user_info = {
+                        'sub': user_data.get('sub'),
+                        'email': user_data.get('email'),
+                        'name': user_data.get('name'),
+                        'picture': user_data.get('picture')
+                    }
+                    print(f"User info retrieved directly from Google: {user_info['email']}")
+                    return user_info
+                else:
+                    print(f"Failed to get user info with access token: {response.status_code}")
+                    print(f"Response: {response.text}")
+            else:
+                # Try to verify the token with Firebase Auth
+                print("Attempting to verify token with Firebase Auth")
+                decoded_token = firebase_auth.verify_id_token(token)
+                
+                # Extract user information
+                user_info = {
+                    'sub': decoded_token.get('sub', ''),
+                    'email': decoded_token.get('email', ''),
+                    'name': decoded_token.get('name', ''),
+                    'picture': decoded_token.get('picture', '')
+                }
+                
+                print(f"Token verified with Firebase. User: {user_info['email']}")
+                return user_info
+        except Exception as e:
+            print(f"Primary verification failed: {e}")
+            import traceback
+            traceback.print_exc()
+            
+        # Fallback: Verify with Google directly
+        print(f"Attempting fallback verification with Google tokeninfo endpoint...")
+        
+        try:
+            # Request information from Google's tokeninfo endpoint
+            tokeninfo_url = 'https://oauth2.googleapis.com/tokeninfo'
+            
+            # Try as ID token first
+            params = {'id_token': token}
+            response = requests.get(tokeninfo_url, params=params)
+            
+            # If that fails, try as access token
+            if response.status_code != 200:
+                print(f"ID token verification failed. Trying as access token...")
+                params = {'access_token': token}
+                response = requests.get(tokeninfo_url, params=params)
+            
+            if response.status_code == 200:
+                token_info = response.json()
+                user_info = {
+                    'sub': token_info.get('sub', token_info.get('user_id', '')),
+                    'email': token_info.get('email', ''),
+                    'name': token_info.get('name', token_info.get('email', '').split('@')[0]),
+                    'picture': token_info.get('picture', '')
+                }
+                print(f"Fallback verification successful. User: {user_info['email']}")
+                return user_info
+            else:
+                print(f"Fallback verification failed: {response.status_code}")
+                print(f"Response: {response.text}")
+                return None
+        except Exception as fallback_error:
+            print(f"Fallback verification error: {fallback_error}")
+            traceback.print_exc()
+            return None
+    except Exception as e:
+        print(f"Error in token verification: {e}")
+        traceback.print_exc()
+        return None
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('You have been logged out.', 'success')
+    return redirect(url_for('search'))
 
 #############################################
 # Routes
@@ -360,6 +966,7 @@ def search():
     query = ""
     results = []
     optimization_explanation = ""
+    grand_summary = ""
     # Default filter values
     selected_genre = "All"
     selected_year = "All"
@@ -367,7 +974,26 @@ def search():
     selected_price = "All"
     sort_by = "Relevance"
     use_ai_enhanced = False
+    use_deep_search = False
     show_previous_search = False
+    deep_search_active = False
+    restored_from_cache = False
+    result_limit = 50
+    
+    global deep_search_status
+
+    # Special case for ?restore=true - just show the form with data from previous session,
+    # without triggering a new search
+    if request.method == "GET" and request.args.get("restore") == "true":
+        # We'll set this flag to indicate in the template that we're just restoring the form
+        # The frontend JS will handle the actual restoration of values
+        print("Restore mode detected - will not trigger new search")
+        restored_from_cache = True
+        # Explicitly ensure results are an empty list
+        results = []
+        # Don't set any values from session - let the JS on the client side handle it
+        # from localStorage instead
+        query = ""
 
     if request.method == "POST":
         query = request.form.get("query", "").strip()
@@ -376,34 +1002,79 @@ def search():
         selected_platform = request.form.get("platform", "All")
         selected_price = request.form.get("price", "All")
         sort_by = request.form.get("sort_by", "Relevance")
-        use_ai_enhanced = request.form.get("use_ai_enhanced") == "true"  # Convert string to boolean
+        use_ai_enhanced = request.form.get("use_ai_enhanced") == "true"
+        use_deep_search = request.form.get("use_deep_search") == "true"
+        result_limit = int(request.form.get("result_limit", "50"))
 
-        if query:
-            results, optimization_explanation = perform_search(
-                query, 
-                selected_genre, 
-                selected_year, 
-                selected_platform, 
-                selected_price, 
-                sort_by,
-                use_ai_enhanced
-            )
-            # Store only search parameters and not the full results to keep cookie size small
+        # Ensure only one of AI Enhanced or Deep Search is enabled
+        if use_ai_enhanced and use_deep_search:
+            use_ai_enhanced = False  # Deep Search takes precedence
+        
+        # Check if we already have a completed deep search for this query that hasn't been served
+        if deep_search_status["completed"] and not deep_search_status["results_served"] and deep_search_status["original_query"] == query:
+            # Use the completed deep search results instead of starting a new search
+            print(f"Using completed deep search results for query: '{query}'")
+            results = deep_search_status["results"]
+            grand_summary = deep_search_status["grand_summary"]
+            deep_search_active = False
+            deep_search_status["results_served"] = True  # Mark as served to prevent reuse
+            use_deep_search = False  # Prevent starting a new deep search
+            
+            # Store search parameters in session
             session["last_search"] = {
                 "query": query,
-                # Don't store results in the session to avoid large cookies
                 "filters": {
                     "genre": selected_genre,
                     "release_year": selected_year,
                     "platform": selected_platform,
                     "price": selected_price,
                     "sort_by": sort_by,
-                    "use_ai_enhanced": use_ai_enhanced
+                    "result_limit": result_limit,
+                    "use_ai_enhanced": use_ai_enhanced,
+                    "use_deep_search": False  # Set to False since we're using cached results
+                }
+            }
+        elif query:
+            results, explanation = perform_search(
+                query, 
+                selected_genre, 
+                selected_year, 
+                selected_platform, 
+                selected_price, 
+                sort_by,
+                use_ai_enhanced,
+                use_deep_search,
+                limit=result_limit
+            )
+            
+            # For AI Enhanced, the explanation is the optimization explanation
+            # For Deep Search, the explanation is a status message (and results will be empty)
+            if use_ai_enhanced:
+                optimization_explanation = explanation
+            elif use_deep_search:
+                deep_search_active = True
+                optimization_explanation = explanation  # Initial status message
+            
+            # Store search parameters in session
+            session["last_search"] = {
+                "query": query,
+                "filters": {
+                    "genre": selected_genre,
+                    "release_year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                    "sort_by": sort_by,
+                    "result_limit": result_limit,
+                    "use_ai_enhanced": use_ai_enhanced,
+                    "use_deep_search": use_deep_search
                 }
             }
         else:
             session.pop("last_search", None)
     elif request.method == "GET":
+        # Check if this is a view_results request from the JavaScript redirect
+        view_results = request.args.get("view_results") == "true"
+        
         # Handle explicit query parameters in URL
         query = request.args.get("q", "").strip()
         selected_genre = request.args.get("genre", "All")
@@ -412,20 +1083,93 @@ def search():
         selected_price = request.args.get("price", "All")
         sort_by = request.args.get("sort_by", "Relevance")
         use_ai_enhanced = request.args.get("use_ai_enhanced") == "true"
+        use_deep_search = request.args.get("use_deep_search") == "true"
+        try:
+            result_limit = int(request.args.get("result_limit", "50"))
+        except ValueError:
+            result_limit = 50
         # Flag to explicitly re-run search (not set by default)
         run_search = request.args.get("run_search") == "true"
 
-        if query and run_search:
-            # Only execute search if query is provided AND run_search flag is set
-            results, optimization_explanation = perform_search(
+        # Ensure only one of AI Enhanced or Deep Search is enabled
+        if use_ai_enhanced and use_deep_search:
+            use_ai_enhanced = False  # Deep Search takes precedence
+        
+        print(f"GET request - Query: '{query}', View Results: {view_results}, Run Search: {run_search}, Deep Search Status: completed={deep_search_status['completed']}, original_query='{deep_search_status['original_query']}'")
+        
+        # Special handling for view_results parameter - this means we're coming from 
+        # a completed deep search and should display its results without restarting it
+        if view_results and deep_search_status["completed"] and query and query.lower() == deep_search_status["original_query"].lower():
+            print(f"Showing completed deep search results for query: '{query}' (view_results=true)")
+            results = deep_search_status["results"]
+            grand_summary = deep_search_status["grand_summary"]
+            deep_search_active = False
+            deep_search_status["results_served"] = True  # Mark as served to prevent reuse
+            use_deep_search = False  # Reset the flag since we're just viewing results
+            
+            # Store search parameters in session
+            session["last_search"] = {
+                "query": query,
+                "filters": {
+                    "genre": selected_genre,
+                    "release_year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                    "sort_by": sort_by,
+                    "result_limit": result_limit,
+                    "use_ai_enhanced": use_ai_enhanced,
+                    "use_deep_search": False  # Set to false since we're using cached results
+                }
+            }
+            
+            print(f"Results prepared: {len(results)} games, Grand Summary: {len(grand_summary)} chars")
+        # Check if we have a completed deep search with the same query that hasn't been served
+        elif query and deep_search_status["completed"] and not deep_search_status["results_served"] and query.lower() == deep_search_status["original_query"].lower():
+            # Use the completed deep search results instead of starting a new search
+            print(f"Using completed deep search results for query: '{query}'")
+            results = deep_search_status["results"]
+            grand_summary = deep_search_status["grand_summary"]
+            deep_search_active = False
+            deep_search_status["results_served"] = True  # Mark as served to prevent reuse
+            
+            # Store search parameters in session
+            session["last_search"] = {
+                "query": query,
+                "filters": {
+                    "genre": selected_genre,
+                    "release_year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                    "sort_by": sort_by,
+                    "result_limit": result_limit,
+                    "use_ai_enhanced": use_ai_enhanced,
+                    "use_deep_search": False  # Set to false since we're using cached results
+                }
+            }
+            
+            print(f"Results prepared: {len(results)} games, Grand Summary: {len(grand_summary)} chars")
+        elif query and (run_search or request.args.get("q")):
+            # Execute search if query is provided AND either run_search flag is set OR query is in the URL
+            print(f"Running search for query: '{query}' (explicit run from URL parameters)")
+            results, explanation = perform_search(
                 query, 
                 selected_genre, 
                 selected_year, 
                 selected_platform, 
                 selected_price, 
                 sort_by,
-                use_ai_enhanced
+                use_ai_enhanced,
+                use_deep_search,
+                limit=result_limit
             )
+            
+            # Handle explanation based on search mode
+            if use_ai_enhanced:
+                optimization_explanation = explanation
+            elif use_deep_search:
+                deep_search_active = True
+                optimization_explanation = explanation
+            
             # Store parameters in session
             session["last_search"] = {
                 "query": query,
@@ -435,7 +1179,9 @@ def search():
                     "platform": selected_platform,
                     "price": selected_price,
                     "sort_by": sort_by,
-                    "use_ai_enhanced": use_ai_enhanced
+                    "result_limit": result_limit,
+                    "use_ai_enhanced": use_ai_enhanced,
+                    "use_deep_search": use_deep_search
                 }
             }
         elif "last_search" in session and not query:
@@ -450,13 +1196,16 @@ def search():
                 selected_platform = filters.get("platform", "All")
                 selected_price = filters.get("price", "All")
                 sort_by = filters.get("sort_by", "Relevance")
+                result_limit = filters.get("result_limit", 50)
                 use_ai_enhanced = filters.get("use_ai_enhanced", False)
+                use_deep_search = filters.get("use_deep_search", False)
                 show_previous_search = True
                 
                 # Only show this message when we're displaying a previous search form
                 if show_previous_search:
                     optimization_explanation = "Your previous search is ready to run again"
-
+    
+    print(f"Final template values: Results: {len(results)}, Has Grand Summary: {'Yes' if grand_summary else 'No'}")
     return render_template("search.html", 
                           query=query, 
                           results=results,
@@ -466,8 +1215,13 @@ def search():
                           selected_price=selected_price,
                           sort_by=sort_by,
                           use_ai_enhanced=use_ai_enhanced,
+                          use_deep_search=use_deep_search,
                           optimization_explanation=optimization_explanation,
-                          show_previous_search=show_previous_search)
+                          grand_summary=grand_summary,
+                          deep_search_active=deep_search_active,
+                          show_previous_search=show_previous_search,
+                          restored_from_cache=restored_from_cache,
+                          result_limit=result_limit)
 
 @app.route("/detail/<appid>")
 def detail(appid):
@@ -573,6 +1327,494 @@ def detail(appid):
                            player_growth_available=player_growth_available,
                            orig_query=orig_query,
                            media=media)
+
+#############################################
+# Game Lists Routes
+#############################################
+@app.route('/user/lists')
+@login_required
+def user_lists():
+    """Show all lists for the current user"""
+    lists = current_user.get_lists()
+    return render_template('lists.html', lists=lists)
+
+@app.route('/user/lists/<list_id>')
+@login_required
+def view_list(list_id):
+    """Show games in a specific list"""
+    # Get the list information
+    lists = current_user.get_lists()
+    list_info = None
+    for lst in lists:
+        if lst['id'] == list_id:
+            list_info = lst
+            break
+    
+    if not list_info:
+        flash('List not found.', 'danger')
+        return redirect(url_for('user_lists'))
+    
+    # Get games in the list
+    games = current_user.get_games_in_list(list_id)
+    
+    # Load summaries for AI summary data
+    summaries_dict = load_summaries(SUMMARIES_FILE)
+    print(f"Loaded {len(summaries_dict)} summaries for list view")
+    
+    # Process each game to ensure it has media, especially header_image
+    for game in games:
+        # Get the appid as integer for lookup
+        appid = int(game['appid'])
+        
+        # Load AI summary from summaries file if available
+        summary_obj = summaries_dict.get(appid, {})
+        if 'ai_summary' in summary_obj:
+            ai_summary = summary_obj['ai_summary']
+            # Ensure AI summary has proper formatting
+            if ai_summary and isinstance(ai_summary, str):
+                # Add paragraph breaks if needed
+                if not ai_summary.startswith('#') and '\n\n' not in ai_summary:
+                    ai_summary = ai_summary.replace('\n', '\n\n')
+                game['ai_summary'] = ai_summary
+            else:
+                game['ai_summary'] = ai_summary
+            print(f"Found AI summary in summaries file for {game['name']} (appid: {appid})")
+        elif 'ai_summary' not in game and 'short_description' in game:
+            # Use short description as fallback
+            game['ai_summary'] = game['short_description']
+            print(f"Using short description as fallback for {game['name']} (appid: {appid})")
+        else:
+            print(f"No AI summary or fallback available for {game['name']} (appid: {appid})")
+            
+        # Ensure media list exists
+        if not game.get('media') or not isinstance(game['media'], list):
+            game['media'] = []
+            
+        # Add header image as the first item if it exists and isn't already in media
+        if game.get('header_image') and game['header_image'] not in game['media']:
+            game['media'].insert(0, force_https(game['header_image']))
+        
+        # If there's store_data with a header_image, use that as fallback
+        if not game['media'] and game.get('store_data', {}).get('header_image'):
+            game['media'].insert(0, force_https(game['store_data']['header_image']))
+            
+        # Add screenshots from store_data
+        store_data = game.get('store_data', {})
+        if isinstance(store_data, dict):
+            # Add screenshots
+            screenshots = store_data.get('screenshots', [])
+            for screenshot in screenshots:
+                if isinstance(screenshot, dict) and screenshot.get('path_full'):
+                    media_url = force_https(screenshot['path_full'])
+                    if media_url not in game['media']:
+                        game['media'].append(media_url)
+            
+            # Add videos
+            movies = store_data.get('movies', [])
+            for movie in movies:
+                webm_max = movie.get('webm', {}).get('max')
+                mp4_max = movie.get('mp4', {}).get('max')
+                if webm_max:
+                    media_url = force_https(webm_max)
+                    if media_url not in game['media']:
+                        game['media'].append(media_url)
+                elif mp4_max:
+                    media_url = force_https(mp4_max)
+                    if media_url not in game['media']:
+                        game['media'].append(media_url)
+                else:
+                    thumb = movie.get('thumbnail')
+                    if thumb:
+                        media_url = force_https(thumb)
+                        if media_url not in game['media']:
+                            game['media'].append(media_url)
+            
+        # Ensure essential fields have default values if missing
+        if 'price' not in game:
+            price_overview = game.get('store_data', {}).get('price_overview', {})
+            game['price'] = price_overview.get('final', 0) / 100.0 if price_overview else 0.0
+            
+        if 'is_free' not in game:
+            game['is_free'] = game.get('store_data', {}).get('is_free', False)
+            
+        if 'release_year' not in game:
+            # Extract year from release_date
+            release_date = game.get('release_date', '')
+            if release_date:
+                try:
+                    year = release_date.split(',')[-1].strip()
+                    game['release_year'] = year
+                except:
+                    game['release_year'] = 'Unknown'
+            else:
+                game['release_year'] = 'Unknown'
+                
+        # Add a flag for whether the game is released
+        coming_soon = game.get('store_data', {}).get('release_date', {}).get('coming_soon', False)
+        game['is_released'] = not coming_soon
+    
+    # Handle sorting options
+    sort_by = request.args.get('sort_by', 'name')
+    sort_order = request.args.get('order', 'asc')
+    
+    if sort_by == 'date_added':
+        # Sort by date_added (using timestamp or default to 0)
+        reverse = sort_order == 'desc'
+        games.sort(key=lambda g: g.get('timestamp', 0), reverse=reverse)
+    elif sort_by == 'price':
+        # Sort by price
+        reverse = sort_order == 'desc'
+        games.sort(key=lambda g: 0 if g.get('is_free', False) else g.get('price', 0), reverse=reverse)
+    elif sort_by == 'release_year':
+        # Sort by release year, putting Unknown at the end
+        reverse = sort_order == 'desc'
+        def release_year_key(g):
+            year = g.get('release_year', 'Unknown')
+            if year == 'Unknown' or year == 'TBA' or not year.isdigit():
+                return 9999 if not reverse else -9999
+            return int(year)
+        games.sort(key=release_year_key, reverse=reverse)
+    else:
+        # Default sort by name
+        reverse = sort_order == 'desc'
+        games.sort(key=lambda g: g.get('name', '').lower(), reverse=reverse)
+    
+    # Handle filtering options
+    show_released_only = request.args.get('released_only') == 'true'
+    if show_released_only:
+        games = [game for game in games if game.get('is_released', True)]
+    
+    return render_template('list_detail.html', 
+                           list=list_info, 
+                           games=games,
+                           sort_by=sort_by,
+                           sort_order=sort_order,
+                           show_released_only=show_released_only)
+
+@app.route('/create_list', methods=['POST'])
+@login_required
+def create_list():
+    """Create a new list"""
+    list_name = request.form.get('list_name')
+    
+    if not list_name or not list_name.strip():
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({'success': False, 'error': 'List name is required'})
+        flash('List name is required.', 'danger')
+        return redirect(url_for('user_lists'))
+    
+    # Create the list
+    list_id = current_user.create_list(list_name.strip())
+    
+    if not list_id:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({'success': False, 'error': 'Failed to create list'})
+        flash('Failed to create list.', 'danger')
+        return redirect(url_for('user_lists'))
+    
+    # Check if this is an AJAX request
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({'success': True, 'list_id': list_id, 'name': list_name.strip()})
+    
+    flash(f'List "{list_name}" created successfully.', 'success')
+    return redirect(url_for('user_lists'))
+
+@app.route('/delete_list/<list_id>', methods=['POST'])
+@login_required
+def delete_list(list_id):
+    """Delete a list"""
+    result = current_user.delete_list(list_id)
+    
+    if result:
+        flash('List deleted successfully.', 'success')
+    else:
+        flash('Failed to delete list.', 'danger')
+    
+    return redirect(url_for('user_lists'))
+
+@app.route('/save_game/<int:appid>', methods=['POST'])
+@login_required
+def save_game(appid):
+    """Save a game to one or more lists"""
+    list_ids = request.form.getlist('list_ids')
+    
+    # Check if this is an AJAX request
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    
+    if not list_ids:
+        if is_ajax:
+            return jsonify({'success': False, 'message': 'Please select at least one list.'})
+        flash('Please select at least one list.', 'danger')
+        return redirect(request.referrer or url_for('search'))
+    
+    # Get the game data
+    game_data = get_game_data_by_appid(appid, STEAM_DATA_FILE, index_map)
+    
+    if not game_data:
+        if is_ajax:
+            return jsonify({'success': False, 'message': 'Game not found.'})
+        flash('Game not found.', 'danger')
+        return redirect(request.referrer or url_for('search'))
+    
+    # Add the game to each selected list
+    success_count = 0
+    for list_id in list_ids:
+        if current_user.add_game_to_list(list_id, game_data):
+            success_count += 1
+    
+    # Prepare response based on success
+    if success_count == len(list_ids):
+        message = f'Game added to {success_count} list(s) successfully.'
+        success = True
+    elif success_count > 0:
+        message = f'Game added to {success_count} out of {len(list_ids)} list(s).'
+        success = True
+    else:
+        message = 'Failed to add game to any lists.'
+        success = False
+    
+    # Return JSON for AJAX requests
+    if is_ajax:
+        return jsonify({
+            'success': success,
+            'message': message
+        })
+    
+    # Standard response for non-AJAX requests
+    if success:
+        flash(message, 'success')
+    else:
+        flash(message, 'danger')
+    
+    return redirect(request.referrer or url_for('search'))
+
+@app.route('/remove_game/<list_id>/<int:appid>', methods=['POST'])
+@login_required
+def remove_game_from_list(list_id, appid):
+    """Remove a game from a list"""
+    result = current_user.remove_game_from_list(list_id, appid)
+    
+    if result:
+        flash('Game removed from list successfully.', 'success')
+    else:
+        flash('Failed to remove game from list.', 'danger')
+    
+    return redirect(url_for('view_list', list_id=list_id))
+
+@app.route('/api/game_lists/<int:appid>')
+@login_required
+def get_game_lists_api(appid):
+    """API to get all lists and whether they contain a specific game"""
+    print(f"\n=== GET GAME LISTS API CALLED ===")
+    print(f"User: {current_user.email}")
+    print(f"AppID: {appid}")
+    
+    lists = current_user.get_lists()
+    print(f"Found {len(lists)} lists for user")
+    
+    # For each list, check if it contains the game
+    result = []
+    for lst in lists:
+        has_game = current_user.is_game_in_list(lst['id'], appid)
+        print(f"  List: {lst['name']} (ID: {lst['id']}) - Has game: {has_game}")
+        result.append({
+            'id': lst['id'],
+            'name': lst['name'],
+            'has_game': has_game
+        })
+    
+    print(f"Returning {len(result)} lists\n")
+    return jsonify(result)
+
+@app.route('/api/save_results_as_list', methods=['POST'])
+@login_required
+def save_results_as_list():
+    """API to save all search results as a new list with AI-generated name"""
+    try:
+        # Get data from the request
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'message': 'No data provided'}), 400
+            
+        query = data.get('query', '').strip()
+        results = data.get('results', [])
+        
+        if not query:
+            return jsonify({'success': False, 'message': 'Search query is required'}), 400
+            
+        if not results or not isinstance(results, list):
+            return jsonify({'success': False, 'message': 'No valid search results provided'}), 400
+            
+        # Log how many games we're saving
+        print(f"Saving {len(results)} games to a new list for query: '{query}'")
+            
+        # Generate a list name using LLM
+        list_name = generate_list_name(query, results)
+        if not list_name:
+            # Fallback list name if generation fails
+            list_name = f"Search: {query[:30]}"
+        
+        # Create the list
+        list_id = current_user.create_list(list_name)
+        if not list_id:
+            return jsonify({'success': False, 'message': 'Failed to create list'}), 500
+            
+        print(f"Created new list '{list_name}' (ID: {list_id}) with {len(results)} games")
+        
+        # Add games to the list in reverse order to maintain correct chronological order
+        # (last added game will have the most recent timestamp)
+        success_count = 0
+        failed_games = []
+        
+        # First, add games in bulk to avoid timestamp issues
+        for i, game_data in enumerate(reversed(results)):
+            if not isinstance(game_data, dict) or 'appid' not in game_data:
+                failed_games.append(f"Invalid game data at position {i}")
+                continue
+                
+            appid = game_data.get('appid')
+            
+            # Get full game data
+            full_game_data = get_game_data_by_appid(appid, STEAM_DATA_FILE, index_map)
+            if not full_game_data:
+                failed_games.append(f"Game {appid} not found")
+                continue
+                
+            # Add the game to the list
+            if current_user.add_game_to_list(list_id, full_game_data):
+                success_count += 1
+            else:
+                failed_games.append(f"Failed to add game {appid} to list")
+        
+        # Prepare response
+        if success_count == len(results):
+            message = f"All {success_count} games saved to list '{list_name}' successfully"
+            success = True
+        elif success_count > 0:
+            message = f"{success_count} out of {len(results)} games saved to list '{list_name}'"
+            success = True
+        else:
+            message = "Failed to add any games to the list"
+            success = False
+            
+        return jsonify({
+            'success': success,
+            'message': message,
+            'list_id': list_id,
+            'list_name': list_name,
+            'games_added': success_count,
+            'failed_games': failed_games,
+            'redirect_url': url_for('view_list', list_id=list_id)
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+        
+def generate_list_name(query, results):
+    """Generate a list name based on the search query and results using LLM"""
+    try:
+        # For simplicity, just take a couple top results to use as context
+        top_results = results[:5]
+        game_names = [game.get('name', '') for game in top_results if game.get('name')]
+        
+        # Create input for the LLM
+        prompt = f"""Generate a short, catchy list name (maximum 40 characters) for a collection of games based on this search query: "{query}".
+        
+        The top games in this collection are:
+        {', '.join(game_names)}
+        
+        The list name should capture the theme of these games and the user's search intent.
+        Respond with ONLY the list name, nothing else."""
+        
+        # Use the OpenRouter API to generate the list name
+        list_name = None
+        try:
+            from llm_processor import generate_completion
+            list_name = generate_completion(prompt, max_tokens=30)
+            
+            # Clean up the response (remove quotes, ensure not too long)
+            if list_name:
+                list_name = list_name.strip('"\'').strip()
+                if len(list_name) > 40:
+                    list_name = list_name[:37] + "..."
+        except Exception as llm_error:
+            print(f"Error generating list name with LLM: {llm_error}")
+            
+        if not list_name or len(list_name) < 3:
+            # Fallback if LLM doesn't provide a valid name
+            if query and len(query) <= 35:
+                return f"Games about {query}"
+            else:
+                return f"Search: {query[:30]}"
+                
+        return list_name
+    except Exception as e:
+        print(f"Error in generate_list_name: {e}")
+        # Fallback to a simple name based on query
+        return f"Search: {query[:30]}"
+
+@app.route('/api/update_list/<list_id>', methods=['POST'])
+@login_required
+def update_list_api(list_id):
+    """API endpoint to update list metadata (name, description, notes)"""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'message': 'No data provided'}), 400
+            
+        field = data.get('field')
+        value = data.get('value', '').strip()
+        
+        # Validate field
+        if field not in ['name', 'description', 'notes']:
+            return jsonify({'success': False, 'message': 'Invalid field'}), 400
+            
+        # Validate permissions (make sure user owns the list)
+        lists = current_user.get_lists()
+        list_exists = False
+        for lst in lists:
+            if lst['id'] == list_id:
+                list_exists = True
+                break
+                
+        if not list_exists:
+            return jsonify({'success': False, 'message': 'List not found or access denied'}), 404
+            
+        # Update list in Firebase
+        result = current_user.update_list_metadata(list_id, field, value)
+        
+        if result:
+            return jsonify({'success': True, 'message': f'List {field} updated successfully'})
+        else:
+            return jsonify({'success': False, 'message': 'Failed to update list metadata'}), 500
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+@app.route('/api/render_markdown', methods=['POST'])
+def render_markdown_api():
+    """API endpoint to render markdown to HTML"""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'success': False, 'message': 'No data provided'}), 400
+            
+        markdown_text = data.get('markdown', '')
+        if not markdown_text:
+            return jsonify({'html': ''})
+            
+        # Use the existing markdown filter to render HTML
+        html = markdown_filter(markdown_text)
+        
+        return jsonify({'success': True, 'html': html})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 if __name__ == "__main__":
     # Make sure debug is True for development logging

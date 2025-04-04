@@ -9,3 +9,5 @@ checkpoint.txt
 archive/*.jsonl
 archive/processed_ids.txt
 archive/summaries_checkpoint.txt
+
+/credentials/

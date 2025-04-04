@@ -1,0 +1,57 @@
+{% extends "base_with_sidebar.html" %}
+{% block title %}My Lists - Steam Seek{% endblock %}
+
+{% block main_content %}
+<div class="container">
+  <h1 class="mb-4">My Game Lists</h1>
+  
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  
+  <!-- Create New List Form -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <h5 class="card-title">Create New List</h5>
+      <form method="post" action="{{ url_for('create_list') }}" class="row g-3 align-items-center">
+        <div class="col-auto">
+          <input type="text" name="list_name" class="form-control" placeholder="List Name" required>
+        </div>
+        <div class="col-auto">
+          <button type="submit" class="btn btn-primary">Create List</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- Existing Lists -->
+  {% if lists %}
+    <div class="row">
+      {% for list in lists %}
+        <div class="col-md-4 mb-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <h5 class="card-title">{{ list.name }}</h5>
+              <p class="card-text text-muted">
+                Created: {{ list.created_at.strftime('%Y-%m-%d') if list.created_at else 'Unknown' }}
+              </p>
+              <a href="{{ url_for('view_list', list_id=list.id) }}" class="btn btn-primary">View Games</a>
+              <form method="post" action="{{ url_for('delete_list', list_id=list.id) }}" class="d-inline">
+                <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this list?')">Delete</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="alert alert-info">
+      <p>You don't have any lists yet. Create one to start organizing your games!</p>
+    </div>
+  {% endif %}
+</div>
+{% endblock %} 

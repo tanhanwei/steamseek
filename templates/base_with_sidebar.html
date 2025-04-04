@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{% block title %}Steam Seek{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
+  <style>
+    /* Loader Overlay */
+    #loader-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(255,255,255,0.8);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      color: #333;
+      transition: opacity 0.3s ease;
+    }
+    
+    /* Sidebar styles */
+    .sidebar {
+      min-height: calc(100vh - 56px);
+      position: sticky;
+      top: 56px;
+    }
+    
+    .sidebar .nav-link {
+      color: #333;
+      padding: 0.5rem 1rem;
+      border-radius: 0.25rem;
+      margin-bottom: 0.25rem;
+    }
+    
+    .sidebar .nav-link:hover {
+      background-color: #f8f9fa;
+    }
+    
+    .sidebar .nav-link.active {
+      background-color: #0d6efd;
+      color: white;
+    }
+    
+    .sidebar .nav-link i {
+      margin-right: 0.5rem;
+    }
+    
+    .sidebar-heading {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      font-weight: bold;
+      color: #6c757d;
+      padding: 0.5rem 1rem;
+      margin-top: 1rem;
+    }
+    
+    .submenu {
+      padding-left: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="{{ url_for('search') }}">Steam Seek</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav me-auto">
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint == 'search' %}active{% endif %}" href="{{ url_for('search') }}">Search</a>
+          </li>
+          {% if current_user.is_authenticated %}
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint == 'user_lists' %}active{% endif %}" href="{{ url_for('user_lists') }}">My Lists</a>
+          </li>
+          {% endif %}
+        </ul>
+        <ul class="navbar-nav ms-auto">
+          {% if current_user.is_authenticated %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+          </li>
+          {% else %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('login') }}">Login</a>
+          </li>
+          {% endif %}
+        </ul>
+      </div>
+    </div>
+  </nav>
+  
+  <!-- Loader Overlay -->
+  <div id="loader-overlay" style="display:none;">
+    <div class="spinner-border text-primary" role="status">
+      <span class="visually-hidden">Loading...</span>
+    </div>
+    <div id="loader-message" style="margin-top: 10px;">Loading...</div>
+  </div>
+  
+  <div class="container-fluid mt-3">
+    <div class="row">
+      <!-- Sidebar -->
+      <div class="col-md-3 col-lg-2">
+        <div class="sidebar bg-light p-2">
+          <div class="nav flex-column">
+            <a class="nav-link {% if request.endpoint == 'search' %}active{% endif %}" href="{{ url_for('search') }}">
+              <i class="bi bi-search"></i> Search
+            </a>
+            
+            <!-- Back to Search Results button (shown only when there's a saved search) -->
+            <a class="nav-link d-none" id="backToSearchBtn" href="#">
+              <i class="bi bi-arrow-return-left"></i> Back to Search Results
+            </a>
+            
+            <script>
+              // Check if there's a saved search and show the button if there is
+              document.addEventListener('DOMContentLoaded', function() {
+                try {
+                  console.log("Checking for saved search to enable Back button...");
+                  const savedSearch = localStorage.getItem('steamseek_last_search');
+                  
+                  if (savedSearch) {
+                    console.log("Found saved search data in localStorage");
+                    
+                    try {
+                      // Verify we can parse the data
+                      const searchData = JSON.parse(savedSearch);
+                      const query = searchData.query;
+                      const resultsCount = searchData.cached_results ? searchData.cached_results.length : 0;
+                      const filters = searchData.filters || {};
+                      
+                      console.log(`Saved search: "${query}" with ${resultsCount} results`);
+                      
+                      // Create a URL with all search parameters instead of using restore=true
+                      const backBtn = document.getElementById('backToSearchBtn');
+                      if (backBtn) {
+                        const searchUrl = new URL('/', window.location.origin);
+                        
+                        // Add all search parameters
+                        if (query) searchUrl.searchParams.set('q', query);
+                        if (filters.genre) searchUrl.searchParams.set('genre', filters.genre);
+                        if (filters.release_year) searchUrl.searchParams.set('release_year', filters.release_year);
+                        if (filters.platform) searchUrl.searchParams.set('platform', filters.platform);
+                        if (filters.price) searchUrl.searchParams.set('price', filters.price);
+                        if (filters.sort_by) searchUrl.searchParams.set('sort_by', filters.sort_by);
+                        
+                        searchUrl.searchParams.set('use_ai_enhanced', filters.use_ai_enhanced ? 'true' : 'false');
+                        searchUrl.searchParams.set('use_deep_search', filters.use_deep_search ? 'true' : 'false');
+                        searchUrl.searchParams.set('run_search', 'true');
+                        
+                        // Set the href of the button
+                        backBtn.href = searchUrl.pathname + searchUrl.search;
+                        backBtn.classList.remove('d-none');
+                        console.log("Back to Search Results button enabled with direct search URL:", backBtn.href);
+                      } else {
+                        console.warn("Back button element not found in DOM");
+                      }
+                    } catch (parseError) {
+                      console.error("Error parsing saved search data:", parseError);
+                    }
+                  } else {
+                    console.log("No saved search found in localStorage");
+                  }
+                } catch (error) {
+                  console.error("Error accessing localStorage:", error);
+                }
+              });
+            </script>
+            
+            {% if current_user.is_authenticated %}
+              <div class="sidebar-heading">Saved Lists</div>
+              <a class="nav-link {% if request.endpoint == 'user_lists' %}active{% endif %}" href="{{ url_for('user_lists') }}">
+                <i class="bi bi-card-list"></i> View All Lists
+              </a>
+              
+              <!-- User's Lists (max 5 shown in sidebar) -->
+              <div class="submenu">
+                {% set user_lists = current_user.get_lists() %}
+                {% for list in user_lists[:5] %}
+                  <a class="nav-link {% if request.endpoint == 'view_list' and request.view_args.list_id == list.id %}active{% endif %}" 
+                     href="{{ url_for('view_list', list_id=list.id) }}">
+                    <i class="bi bi-collection"></i> {{ list.name }}
+                  </a>
+                {% endfor %}
+                {% if user_lists|length > 5 %}
+                  <a class="nav-link" href="{{ url_for('user_lists') }}">
+                    <i class="bi bi-three-dots"></i> View {{ user_lists|length - 5 }} more...
+                  </a>
+                {% endif %}
+              </div>
+              
+              <div class="sidebar-heading">Settings</div>
+              <a class="nav-link" href="#">
+                <i class="bi bi-gear"></i> Settings
+              </a>
+              
+              <div class="sidebar-heading">User</div>
+              <div class="p-3 mb-3 bg-white rounded">
+                <div class="d-flex align-items-center mb-2">
+                  {% if current_user.photo_url %}
+                    <img src="{{ current_user.photo_url }}" alt="{{ current_user.display_name or current_user.email }}" class="rounded-circle me-2" width="32" height="32">
+                  {% else %}
+                    <i class="bi bi-person-circle me-2" style="font-size: 1.5rem;"></i>
+                  {% endif %}
+                  <div>
+                    <div class="fw-bold">{{ current_user.display_name or 'User' }}</div>
+                    <div class="text-muted small">{{ current_user.email }}</div>
+                  </div>
+                </div>
+                <a href="{{ url_for('logout') }}" class="btn btn-sm btn-outline-secondary d-block w-100">
+                  <i class="bi bi-box-arrow-right"></i> Logout
+                </a>
+              </div>
+            {% else %}
+              <div class="sidebar-heading">User</div>
+              <a class="nav-link" href="{{ url_for('login') }}">
+                <i class="bi bi-box-arrow-in-right"></i> Login
+              </a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      
+      <!-- Main Content -->
+      <div class="col-md-9 col-lg-10">
+        {% block main_content %}{% endblock %}
+      </div>
+    </div>
+  </div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Hide loader overlay when the page finishes loading
+    window.addEventListener('load', function() {
+      var loaderOverlay = document.getElementById('loader-overlay');
+      if(loaderOverlay) {
+        loaderOverlay.style.display = 'none';
+      }
+    });
+
+    document.addEventListener('DOMContentLoaded', function() {
+      var loaderOverlay = document.getElementById('loader-overlay');
+      var loaderMessage = document.getElementById('loader-message');
+      
+      // For all forms, show the overlay on submit
+      document.querySelectorAll('form').forEach(function(form) {
+        form.addEventListener('submit', function() {
+          if(loaderOverlay) {
+            loaderMessage.innerHTML = 'Loading...';
+            loaderOverlay.style.display = 'flex';
+          }
+        });
+      });
+
+      // For links that require a loader (e.g. Analyze button), add the class "show-loader"
+      document.querySelectorAll('a.show-loader').forEach(function(link) {
+        link.addEventListener('click', function() {
+          if(loaderOverlay) {
+            loaderMessage.innerHTML = 'Analyzing...';
+            loaderOverlay.style.display = 'flex';
+          }
+        });
+      });
+    });
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html> 

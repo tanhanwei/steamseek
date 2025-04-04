@@ -1,18 +1,56 @@
-{% extends "base.html" %}
+{% extends "base_with_sidebar.html" %}
 {% block title %}Search Games{% endblock %}
 
-{% block content %}
+{% block main_content %}
   <h1>Search Games</h1>
   <form method="post" action="{{ url_for('search') }}">
     <div class="mb-3 position-relative">
       <input type="text" name="query" class="form-control" placeholder="Enter search keywords" value="{{ query }}">
       
-      <!-- AI Enhanced Toggle -->
-      <div class="form-check form-switch position-absolute end-0 top-0 mt-2 me-3">
-        <input class="form-check-input" type="checkbox" id="useAiEnhanced" name="use_ai_enhanced" value="true" {% if use_ai_enhanced %}checked{% endif %}>
-        <label class="form-check-label" for="useAiEnhanced">AI Enhanced</label>
+      <!-- AI Search Toggles -->
+      <div class="position-absolute end-0 top-0 mt-2 me-3 d-flex gap-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="useAiEnhanced" name="use_ai_enhanced" value="true" 
+                {% if use_ai_enhanced %}checked{% endif %} 
+                onchange="document.getElementById('useDeepSearch').checked = false;">
+          <label class="form-check-label" for="useAiEnhanced">AI Enhanced</label>
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="useDeepSearch" name="use_deep_search" value="true" 
+                {% if use_deep_search %}checked{% endif %}
+                onchange="document.getElementById('useAiEnhanced').checked = false;">
+          <label class="form-check-label" for="useDeepSearch">Deep Search</label>
+        </div>
       </div>
     </div>
+    
+    <!-- Deep Search Progress (shown when a deep search is active) -->
+    {% if deep_search_active %}
+    <div id="deepSearchProgress" class="alert alert-info mb-3">
+      <div class="d-flex justify-content-between">
+        <strong>Deep Search in progress</strong>
+        <span id="progressStatus">Initializing...</span>
+      </div>
+      <div class="progress mt-2">
+        <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+      </div>
+      <div id="deepSearchStep" class="mt-2 small">Please wait while we find the best results for you...</div>
+    </div>
+    {% endif %}
+    
+    <!-- Grand Summary (shown when deep search has completed) -->
+    {% if grand_summary and not deep_search_active %}
+    <div class="alert alert-success mb-3">
+      <div class="card">
+        <div class="card-header">
+          <h5 class="mb-0">Deep Search Results</h5>
+        </div>
+        <div class="card-body">
+          {{ grand_summary|markdown }}
+        </div>
+      </div>
+    </div>
+    {% endif %}
     
     <!-- Show previous search message if applicable -->
     {% if show_previous_search and query %}
@@ -21,13 +59,13 @@
         <div>
           <strong>Previous search:</strong> "{{ query }}"
         </div>
-        <a href="{{ url_for('search', q=query, genre=selected_genre, release_year=selected_year, platform=selected_platform, price=selected_price, sort_by=sort_by, use_ai_enhanced='true' if use_ai_enhanced else 'false', run_search='true') }}" class="btn btn-primary btn-sm">Run This Search Again</a>
+        <a href="{{ url_for('search', q=query, genre=selected_genre, release_year=selected_year, platform=selected_platform, price=selected_price, sort_by=sort_by, use_ai_enhanced='true' if use_ai_enhanced else 'false', use_deep_search='true' if use_deep_search else 'false', run_search='true') }}" class="btn btn-primary btn-sm">Run This Search Again</a>
       </div>
     </div>
     {% endif %}
     
     <!-- Show AI optimization explanation if available -->
-    {% if optimization_explanation and query and use_ai_enhanced and not show_previous_search %}
+    {% if optimization_explanation and query and use_ai_enhanced and not show_previous_search and not deep_search_active %}
     <div class="alert alert-info mb-3">
       <small><strong>AI Enhanced:</strong> {{ optimization_explanation }}</small>
     </div>
@@ -86,10 +124,38 @@
         <option value="Positive Review % (High to Low)" {% if sort_by == "Positive Review % (High to Low)" %}selected{% endif %}>Positive Review % (High to Low)</option>
       </select>
     </div>
+    <div class="mb-3">
+      <label for="result_limit">Results to Display:</label>
+      <select name="result_limit" id="result_limit" class="form-select">
+        <option value="10" {% if result_limit == 10 %}selected{% endif %}>10 results</option>
+        <option value="20" {% if result_limit == 20 %}selected{% endif %}>20 results</option>
+        <option value="30" {% if result_limit == 30 %}selected{% endif %}>30 results</option>
+        <option value="40" {% if result_limit == 40 %}selected{% endif %}>40 results</option>
+        <option value="50" {% if result_limit == 50 or not result_limit %}selected{% endif %}>50 results</option>
+      </select>
+    </div>
     <button type="submit" class="btn btn-primary">Search</button>
   </form>
   <hr>
   {% if results %}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2>Search Results ({{ results|length }})</h2>
+      {% if current_user.is_authenticated %}
+      <div class="d-flex align-items-center">
+        <select id="saveResultsCount" class="form-select form-select-sm me-2" style="width: auto;">
+          {% if result_limit >= 10 %}<option value="10">Save 10 games</option>{% endif %}
+          {% if result_limit >= 20 %}<option value="20">Save 20 games</option>{% endif %}
+          {% if result_limit >= 30 %}<option value="30">Save 30 games</option>{% endif %}
+          {% if result_limit >= 40 %}<option value="40">Save 40 games</option>{% endif %}
+          <option value="{{ result_limit }}" selected>Save all (max {{ result_limit }})</option>
+        </select>
+        <button id="saveResultsAsListBtn" class="btn btn-success">
+          <i class="bi bi-save"></i> Save Results as List
+        </button>
+      </div>
+      {% endif %}
+    </div>
+    
     <div class="row">
       {% for r in results %}
         <div class="col-md-6 mb-3">
@@ -128,10 +194,15 @@
               {% endif %}
             </div>
             <div class="card-body">
-              <h5 class="card-title">
+              <h5 class="card-title d-flex justify-content-between align-items-center">
                 <a href="https://store.steampowered.com/app/{{ r.appid }}/" target="_blank" style="text-decoration: none; color: inherit;">
                   {{ r.name }}
                 </a>
+                {% if current_user.is_authenticated %}
+                <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#saveGameModal-{{ r.appid }}">
+                  <i class="bi bi-plus-circle"></i> Add to List
+                </button>
+                {% endif %}
               </h5>
               <p class="card-text">
                 {% if r.genres %}
@@ -161,9 +232,1187 @@
             </div>
           </div>
         </div>
+        
+        <!-- Save Game Modal -->
+        {% if current_user.is_authenticated %}
+        <div class="modal fade" id="saveGameModal-{{ r.appid }}" tabindex="-1" aria-labelledby="saveGameModalLabel-{{ r.appid }}" aria-hidden="true">
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="saveGameModalLabel-{{ r.appid }}">Save "{{ r.name }}" to Lists</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                <form id="saveGameForm-{{ r.appid }}" method="post" action="/save_game/{{ r.appid }}">
+                  <div id="existingLists-{{ r.appid }}">
+                    <h6>Select Lists:</h6>
+                    <p class="loading-lists">Loading your lists...</p>
+                  </div>
+                  <hr>
+                  <div>
+                    <h6>Create New List:</h6>
+                    <div class="input-group mb-3">
+                      <input type="text" id="newListName-{{ r.appid }}" class="form-control" placeholder="New List Name">
+                      <button class="btn btn-outline-secondary" type="button" id="createListBtn-{{ r.appid }}">Create</button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary save-game-btn" data-appid="{{ r.appid }}">Save to Selected Lists</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
       {% endfor %}
     </div>
   {% else %}
     <p>Type something in the box above to begin searching.</p>
+  {% endif %}
+  
+  <!-- Save Results Loading Modal -->
+  {% if current_user.is_authenticated and results %}
+  <div class="modal fade" id="saveResultsModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-labelledby="saveResultsModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="saveResultsModalLabel">Creating List...</h5>
+        </div>
+        <div class="modal-body">
+          <div id="saveResultsMessage" class="text-center mb-3">
+            <p>Our AI is generating a perfect name for your list...</p>
+          </div>
+          <div class="progress">
+            <div id="saveResultsProgress" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+          </div>
+          <div id="saveResultsStatus" class="mt-3 small text-center">
+            <p>Please wait while we create your list with the selected games</p>
+          </div>
+          <div class="text-center mt-3" id="saveResultsCloseButtonContainer" style="display: none;">
+            <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+{% endblock %}
+
+{% block scripts %}
+  <!-- Hidden fields for server-rendered data -->
+  <div id="server-data" style="display:none;" 
+       data-restored-from-cache="{% if restored_from_cache %}true{% else %}false{% endif %}"
+       data-is-authenticated="{% if current_user.is_authenticated %}true{% else %}false{% endif %}"
+       data-has-results="{% if results and query %}true{% else %}false{% endif %}"
+       data-has-no-results="{% if not results and not query %}true{% else %}false{% endif %}"
+       data-query="{{ query|default('', true) }}"
+       data-selected-genre="{{ selected_genre|default('All', true) }}"
+       data-selected-year="{{ selected_year|default('All', true) }}"
+       data-selected-platform="{{ selected_platform|default('All', true) }}"
+       data-selected-price="{{ selected_price|default('All', true) }}"
+       data-sort-by="{{ sort_by|default('Relevance', true) }}"
+       data-result-limit="{{ result_limit|default(50, true) }}"
+       data-use-ai-enhanced="{% if use_ai_enhanced %}true{% else %}false{% endif %}"
+       data-use-deep-search="{% if use_deep_search %}true{% else %}false{% endif %}">
+  </div>
+  
+  <!-- Store the results JSON in a script tag for later access -->
+  <script id="search-results-data" type="application/json">
+    {% if results %}{{ results|tojson }}{% else %}[]{% endif %}
+  </script>
+
+  <!-- JavaScript for "Save Results as List" functionality -->
+  {% if current_user.is_authenticated and results %}
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Get reference to the button and modal
+      const saveResultsBtn = document.getElementById('saveResultsAsListBtn');
+      const saveResultsModal = new bootstrap.Modal(document.getElementById('saveResultsModal'));
+      
+      // Get the search query and results from page data
+      const searchQuery = document.querySelector('[name="query"]').value || 'search';
+      const resultsDataElement = document.getElementById('search-results-data');
+      const searchResults = JSON.parse(resultsDataElement.textContent);
+      
+      // Add click handler to the save results button
+      saveResultsBtn.addEventListener('click', function() {
+        // Only proceed if we have results
+        if (!searchResults || searchResults.length === 0) {
+          alert('No search results to save!');
+          return;
+        }
+        
+        // Get the selected count from the dropdown
+        const saveCountSelect = document.getElementById('saveResultsCount');
+        const saveCount = parseInt(saveCountSelect.value);
+        
+        // Limit the results to the selected count
+        const resultsToSave = searchResults.slice(0, saveCount);
+        
+        // Show the loading modal
+        saveResultsModal.show();
+        
+        // Update progress bar and status
+        const progressBar = document.getElementById('saveResultsProgress');
+        const statusMessage = document.getElementById('saveResultsStatus');
+        const mainMessage = document.getElementById('saveResultsMessage');
+        
+        progressBar.style.width = '20%';
+        mainMessage.innerHTML = '<p>Our AI is generating a perfect name for your list...</p>';
+        statusMessage.innerHTML = `<p>Preparing to save ${resultsToSave.length} games to a new list...</p>`;
+        
+        // Make the AJAX call to save the results as a list
+        fetch('/api/save_results_as_list', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: searchQuery,
+            results: resultsToSave
+          })
+        })
+        .then(response => {
+          // Check if the response is OK
+          if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+          }
+          // Update progress as we start processing the response
+          progressBar.style.width = '70%';
+          mainMessage.innerHTML = '<p>List created! Processing games...</p>';
+          return response.json();
+        })
+        .then(data => {
+          // Process the successful response
+          console.log('Save results response:', data);
+          
+          // Update progress to 100%
+          progressBar.style.width = '100%';
+          
+          if (data.success) {
+            // Success message and prepare to redirect
+            mainMessage.innerHTML = `<p class="text-success"><i class="bi bi-check-circle"></i> Success!</p>`;
+            statusMessage.innerHTML = `<p>${data.message}</p><p>Redirecting to your new list...</p>`;
+            
+            // Redirect after a delay to allow user to see the success message
+            setTimeout(() => {
+              window.location.href = data.redirect_url;
+            }, 1500);
+          } else {
+            // Handle API error
+            mainMessage.innerHTML = `<p class="text-danger"><i class="bi bi-exclamation-triangle"></i> Error</p>`;
+            statusMessage.innerHTML = `<p>${data.message || 'An error occurred while saving the list.'}</p>`;
+            document.getElementById('saveResultsCloseButtonContainer').style.display = 'block';
+          }
+        })
+        .catch(error => {
+          // Handle fetch errors
+          console.error('Error saving results as list:', error);
+          progressBar.style.width = '100%';
+          mainMessage.innerHTML = `<p class="text-danger"><i class="bi bi-exclamation-triangle"></i> Error</p>`;
+          statusMessage.innerHTML = `<p>An error occurred: ${error.message}</p>`;
+          document.getElementById('saveResultsCloseButtonContainer').style.display = 'block';
+        });
+      });
+    });
+  </script>
+  {% endif %}
+
+  <!-- Add JavaScript for persistent search results -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Get server data from the hidden div attributes
+      const serverData = document.getElementById('server-data');
+      const CONFIG = {
+        restoredFromCache: serverData.dataset.restoredFromCache === 'true',
+        isAuthenticated: serverData.dataset.isAuthenticated === 'true',
+        hasResults: serverData.dataset.hasResults === 'true',
+        hasNoResults: serverData.dataset.hasNoResults === 'true',
+        query: serverData.dataset.query,
+        selectedGenre: serverData.dataset.selectedGenre,
+        selectedYear: serverData.dataset.selectedYear,
+        selectedPlatform: serverData.dataset.selectedPlatform,
+        selectedPrice: serverData.dataset.selectedPrice,
+        sortBy: serverData.dataset.sortBy,
+        resultLimit: serverData.dataset.resultLimit,
+        useAiEnhanced: serverData.dataset.useAiEnhanced === 'true',
+        useDeepSearch: serverData.dataset.useDeepSearch === 'true'
+      };
+      
+      // Get the results from the JSON script tag
+      const resultsDataElement = document.getElementById('search-results-data');
+      CONFIG.results = JSON.parse(resultsDataElement.textContent);
+      
+      // Check for auto-restore parameter in URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const autoRestore = urlParams.get('restore') === 'true';
+      
+      // Special handling for page restored from cache
+      if (CONFIG.restoredFromCache) {
+        console.log("%c[RESTORE_DEBUG] Starting restore mode", "background: #ff9; color: #333; font-weight: bold;");
+        console.log("%c[RESTORE_DEBUG] CONFIG data:", "background: #ff9; color: #333;", CONFIG);
+        
+        // Check localStorage storage limits
+        try {
+          let totalSize = 0;
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            const value = localStorage.getItem(key);
+            const size = (key.length + value.length) * 2; // UTF-16 uses 2 bytes per character
+            totalSize += size;
+            console.log("%c[STORAGE_DEBUG] localStorage item:", "background: #abf; color: #333;", 
+                       key, `(${(size / 1024).toFixed(2)} KB)`);
+          }
+          console.log("%c[STORAGE_DEBUG] Total localStorage usage:", "background: #abf; color: #333; font-weight: bold;", 
+                     `${(totalSize / 1024).toFixed(2)} KB / ~5000 KB`);
+        } catch (e) {
+          console.error("%c[STORAGE_DEBUG] Error checking localStorage:", "background: #f55; color: white;", e);
+        }
+        
+        const savedSearch = localStorage.getItem('steamseek_last_search');
+        console.log("%c[RESTORE_DEBUG] localStorage data retrieved:", "background: #ff9; color: #333;", savedSearch ? "found" : "NOT FOUND");
+        
+        if (savedSearch) {
+          try {
+            console.log("%c[RESTORE_DEBUG] Raw localStorage data:", "background: #ff9; color: #333;", savedSearch.substring(0, 200) + "...");
+            console.log("%c[RESTORE_DEBUG] Parsing saved search data...", "background: #ff9; color: #333;");
+            
+            const searchData = JSON.parse(savedSearch);
+            console.log("%c[RESTORE_DEBUG] Search data parsed successfully", "background: #ff9; color: #333;");
+            console.log("%c[RESTORE_DEBUG] Query:", "background: #ff9; color: #333;", searchData.query);
+            console.log("%c[RESTORE_DEBUG] Filters:", "background: #ff9; color: #333;", searchData.filters);
+            
+            const hasResults = searchData.cached_results && Array.isArray(searchData.cached_results);
+            console.log("%c[RESTORE_DEBUG] Results array exists:", "background: #ff9; color: #333;", hasResults);
+            console.log("%c[RESTORE_DEBUG] Results count:", "background: #ff9; color: #333;", 
+                       hasResults ? searchData.cached_results.length : 0);
+            
+            if (hasResults && searchData.cached_results.length > 0) {
+              console.log("%c[RESTORE_DEBUG] First result sample:", "background: #ff9; color: #333;", 
+                         JSON.stringify(searchData.cached_results[0]).substring(0, 300) + "...");
+            }
+            
+            // Display saved search parameters in a banner
+            const restoredBanner = document.createElement('div');
+            restoredBanner.className = 'alert alert-info mb-3';
+            restoredBanner.innerHTML = `
+              <div class="d-flex justify-content-between align-items-center">
+                <span>Previous search: <strong>"${searchData.query}"</strong></span>
+                <button class="btn btn-primary btn-sm" id="runSearchAgainBtn">
+                  <i class="bi bi-arrow-repeat"></i> Run Search Again
+                </button>
+              </div>
+            `;
+            document.querySelector('form').before(restoredBanner);
+            
+            // Set form fields from saved search
+            document.querySelector('input[name="query"]').value = searchData.query;
+            if (searchData.filters) {
+              if (document.querySelector('select[name="genre"]')) {
+                document.querySelector('select[name="genre"]').value = searchData.filters.genre || 'All';
+              }
+              if (document.querySelector('select[name="release_year"]')) {
+                document.querySelector('select[name="release_year"]').value = searchData.filters.release_year || 'All';
+              }
+              if (document.querySelector('select[name="platform"]')) {
+                document.querySelector('select[name="platform"]').value = searchData.filters.platform || 'All';
+              }
+              if (document.querySelector('select[name="price"]')) {
+                document.querySelector('select[name="price"]').value = searchData.filters.price || 'All';
+              }
+              if (document.querySelector('select[name="sort_by"]')) {
+                document.querySelector('select[name="sort_by"]').value = searchData.filters.sort_by || 'Relevance';
+              }
+              
+              if (document.querySelector('select[name="result_limit"]')) {
+                document.querySelector('select[name="result_limit"]').value = searchData.filters.result_limit || '50';
+              }
+              
+              document.getElementById('useAiEnhanced').checked = searchData.filters.use_ai_enhanced || false;
+              document.getElementById('useDeepSearch').checked = searchData.filters.use_deep_search || false;
+              
+              // Make sure only one of them is checked
+              if (document.getElementById('useAiEnhanced').checked && 
+                  document.getElementById('useDeepSearch').checked) {
+                document.getElementById('useAiEnhanced').checked = false;
+              }
+            }
+            
+            // Add event listener to run search button
+            document.getElementById('runSearchAgainBtn').addEventListener('click', function() {
+              document.querySelector('form').submit();
+            });
+            
+            // Build HTML for the search results directly from localStorage
+            if (searchData.hasOwnProperty('cached_results') && Array.isArray(searchData.cached_results)) {
+              console.log(`Found ${searchData.cached_results.length} cached results`);
+              
+              try {
+                // Create a container for results
+                const resultsContainer = document.createElement('div');
+                resultsContainer.className = 'row';
+                resultsContainer.id = 'cachedResultsContainer';
+                console.log("%c[RESTORE_DEBUG] Created results container with ID:", "background: #ff9; color: #333;", resultsContainer.id);
+                
+                // Add a heading
+                const headingHr = document.createElement('hr');
+                const resultsHeading = document.createElement('h3');
+                resultsHeading.textContent = 'Previous Search Results';
+                
+                // Get the form element
+                const formElement = document.querySelector('form');
+                console.log("%c[RESTORE_DEBUG] Form element found:", "background: #ff9; color: #333;", formElement ? true : false);
+                
+                if (formElement) {
+                  console.log("%c[RESTORE_DEBUG] Appending elements to DOM...", "background: #ff9; color: #333;");
+                  formElement.after(headingHr);
+                  headingHr.after(resultsHeading);
+                  resultsHeading.after(resultsContainer);
+                  console.log("%c[RESTORE_DEBUG] DOM elements appended successfully", "background: #ff9; color: #333;");
+                } else {
+                  console.error("%c[RESTORE_DEBUG] CRITICAL ERROR: Form element not found!", "background: #f55; color: white;");
+                  throw new Error("Form element not found in the DOM");
+                }
+                
+                // Generate HTML for each result
+                let countProcessed = 0;
+                
+                // Process results in batches to avoid browser UI freezing
+                function processResultsBatch(startIdx, batchSize) {
+                  const endIdx = Math.min(startIdx + batchSize, searchData.cached_results.length);
+                  console.log("%c[RESTORE_DEBUG] Processing results batch:", "background: #ff9; color: #333;", startIdx, "to", endIdx-1);
+                  
+                  // Double-check that the container still exists
+                  const containerCheck = document.getElementById('cachedResultsContainer');
+                  if (!containerCheck) {
+                    console.error("%c[RESTORE_DEBUG] ERROR: Results container disappeared from DOM!", "background: #f55; color: white;");
+                    return; // Exit if container is missing
+                  }
+                  
+                  for (let i = startIdx; i < endIdx; i++) {
+                    try {
+                      const game = searchData.cached_results[i];
+                      console.log("%c[RESTORE_DEBUG] Processing game:", "background: #ff9; color: #333;", game.appid, game.name);
+                      
+                      const colDiv = document.createElement('div');
+                      colDiv.className = 'col-md-6 mb-3';
+                      
+                      let mediaHtml = '';
+                      if (game.media && game.media.length > 0) {
+                        let carouselItems = '';
+                        game.media.forEach((item, index) => {
+                          const isActive = index === 0 ? 'active' : '';
+                          const lowerItem = item.toLowerCase();
+                          
+                          if (lowerItem.includes('webm')) {
+                            carouselItems += `
+                              <div class="carousel-item ${isActive}">
+                                <video class="d-block w-100" controls>
+                                  <source src="${item}" type="video/webm">
+                                  Your browser does not support the video tag.
+                                </video>
+                              </div>
+                            `;
+                          } else if (lowerItem.includes('mp4')) {
+                            carouselItems += `
+                              <div class="carousel-item ${isActive}">
+                                <video class="d-block w-100" controls>
+                                  <source src="${item}" type="video/mp4">
+                                  Your browser does not support the video tag.
+                                </video>
+                              </div>
+                            `;
+                          } else {
+                            carouselItems += `
+                              <div class="carousel-item ${isActive}">
+                                <img src="${item}" class="d-block w-100" alt="${game.name}">
+                              </div>
+                            `;
+                          }
+                        });
+                        
+                        const carouselNavigation = game.media.length > 1 ? `
+                          <button class="carousel-control-prev" type="button" data-bs-target="#carousel-${game.appid}" data-bs-slide="prev">
+                            <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                            <span class="visually-hidden">Previous</span>
+                          </button>
+                          <button class="carousel-control-next" type="button" data-bs-target="#carousel-${game.appid}" data-bs-slide="next">
+                            <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                            <span class="visually-hidden">Next</span>
+                          </button>
+                        ` : '';
+                        
+                        mediaHtml = `
+                          <div id="carousel-${game.appid}" class="carousel slide">
+                            <div class="carousel-inner">
+                              ${carouselItems}
+                            </div>
+                            ${carouselNavigation}
+                          </div>
+                        `;
+                      }
+                      
+                      // Generate the game info HTML
+                      let genresHtml = '';
+                      if (game.genres && game.genres.length > 0) {
+                        genresHtml = `<small>Genres: ${game.genres.join(', ')}</small><br>`;
+                      }
+                      
+                      let aiSummaryHtml = '';
+                      if (game.ai_summary) {
+                        aiSummaryHtml = `
+                          <p>
+                            <a class="btn btn-secondary" data-bs-toggle="collapse" href="#summary-${game.appid}" role="button" aria-expanded="false" aria-controls="summary-${game.appid}">
+                              Show AI Summary
+                            </a>
+                          </p>
+                          <div class="collapse" id="summary-${game.appid}">
+                            <div class="card card-body">
+                              ${game.ai_summary.replace(/\\n/g, '<br>')}
+                            </div>
+                          </div>
+                        `;
+                      }
+                      
+                      // Build the add to list button if user is logged in
+                      let addToListButton = '';
+                      if (CONFIG.isAuthenticated) {
+                        addToListButton = `
+                          <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#saveGameModal-${game.appid}">
+                            <i class="bi bi-plus-circle"></i> Add to List
+                          </button>
+                        `;
+                      }
+                      
+                      colDiv.innerHTML = `
+                        <div class="card">
+                          ${mediaHtml}
+                          <div class="card-body">
+                            <h5 class="card-title d-flex justify-content-between align-items-center">
+                              <a href="https://store.steampowered.com/app/${game.appid}/" target="_blank" style="text-decoration: none; color: inherit;">
+                                ${game.name}
+                              </a>
+                              ${addToListButton}
+                            </h5>
+                            <p class="card-text">
+                              ${genresHtml}
+                              <small>Release Year: ${game.release_year}</small><br>
+                              <small>Price: ${game.is_free ? 'Free' : '$' + game.price}</small><br>
+                              <small>Positive: ${Math.round(game.pos_percent)}%</small><br>
+                              <small>Reviews: ${game.total_reviews}</small>
+                            </p>
+                            ${aiSummaryHtml}
+                            <div class="d-flex gap-2">
+                              <a href="/detail/${game.appid}?q=${encodeURIComponent(searchData.query)}" class="btn btn-primary show-loader">Analyze</a>
+                              <a href="https://www.youtube.com/results?search_query=${encodeURIComponent(game.name)}+gameplay" target="_blank" class="btn btn-danger">YouTube</a>
+                            </div>
+                          </div>
+                        </div>
+                      `;
+                      
+                      resultsContainer.appendChild(colDiv);
+                      countProcessed++;
+                      
+                      // Add modals for each game if the user is authenticated
+                      if (CONFIG.isAuthenticated) {
+                        const modalDiv = document.createElement('div');
+                        modalDiv.innerHTML = `
+                          <div class="modal fade" id="saveGameModal-${game.appid}" tabindex="-1" aria-labelledby="saveGameModalLabel-${game.appid}" aria-hidden="true">
+                            <div class="modal-dialog">
+                              <div class="modal-content">
+                                <div class="modal-header">
+                                  <h5 class="modal-title" id="saveGameModalLabel-${game.appid}">Save "${game.name}" to Lists</h5>
+                                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                  <form id="saveGameForm-${game.appid}" method="post" action="/save_game/${game.appid}">
+                                    <div id="existingLists-${game.appid}">
+                                      <h6>Select Lists:</h6>
+                                      <p class="loading-lists">Loading your lists...</p>
+                                    </div>
+                                    <hr>
+                                    <div>
+                                      <h6>Create New List:</h6>
+                                      <div class="input-group mb-3">
+                                        <input type="text" id="newListName-${game.appid}" class="form-control" placeholder="New List Name">
+                                        <button class="btn btn-outline-secondary" type="button" id="createListBtn-${game.appid}">Create</button>
+                                      </div>
+                                    </div>
+                                  </form>
+                                </div>
+                                <div class="modal-footer">
+                                  <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                  <button type="button" class="btn btn-primary save-game-btn" data-appid="${game.appid}">Save to Selected Lists</button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        `;
+                        document.body.appendChild(modalDiv);
+                      }
+                    } catch (err) {
+                      console.error(`Error processing game ${i}:`, err);
+                    }
+                  }
+                  
+                  // If there are more results to process, schedule the next batch
+                  if (endIdx < searchData.cached_results.length) {
+                    console.log("%c[RESTORE_DEBUG] Scheduling next batch...", "background: #ff9; color: #333;");
+                    setTimeout(() => {
+                      processResultsBatch(endIdx, batchSize);
+                    }, 10); // Short delay to allow UI to update
+                  } else {
+                    console.log("%c[RESTORE_DEBUG] ✅ Finished processing all %d game results", "background: #5d5; color: #333; font-weight: bold;", countProcessed);
+                    
+                    // Initialize any carousels and other Bootstrap components
+                    const carousels = document.querySelectorAll('.carousel');
+                    console.log("%c[RESTORE_DEBUG] Initializing", "background: #ff9; color: #333;", carousels.length, "carousels");
+                    
+                    carousels.forEach((carousel, index) => {
+                      try {
+                        console.log("%c[RESTORE_DEBUG] Initializing carousel", "background: #ff9; color: #333;", index, carousel.id);
+                        new bootstrap.Carousel(carousel);
+                        console.log("%c[RESTORE_DEBUG] Carousel", "background: #ff9; color: #333;", index, "initialized successfully");
+                      } catch (err) {
+                        console.error("%c[RESTORE_DEBUG] Error initializing carousel", "background: #f55; color: white;", index, err);
+                      }
+                    });
+                    
+                    // Add event listeners for the modals if the user is authenticated
+                    if (CONFIG.isAuthenticated) {
+                      console.log("%c[RESTORE_DEBUG] Starting modal initialization for authenticated user", "background: #ff9; color: #333;");
+                      setTimeout(() => {
+                        initializeDynamicModals();
+                      }, 100);
+                    } else {
+                      console.log("%c[RESTORE_DEBUG] User not authenticated, skipping modal initialization", "background: #ff9; color: #333;");
+                    }
+                    
+                    console.log("%c[RESTORE_DEBUG] ✅ RESTORE COMPLETE", "background: #5d5; color: #333; font-size: 14px; font-weight: bold;");
+                    
+                    // Force a small timeout and verify the DOM structure
+                    setTimeout(() => {
+                      const resultsCheck = document.getElementById('cachedResultsContainer');
+                      console.log("%c[RESTORE_DEBUG] Final check - Results container exists:", "background: #ff9; color: #333;", resultsCheck ? true : false);
+                      if (resultsCheck) {
+                        console.log("%c[RESTORE_DEBUG] Results container has", "background: #ff9; color: #333;", resultsCheck.children.length, "children");
+                      }
+                    }, 500);
+                  }
+                }
+                
+                // Start processing results in batches of 10
+                processResultsBatch(0, 10);
+                
+              } catch (error) {
+                console.error('Error building UI from cached results:', error);
+                alert('There was an error restoring your previous search results. Please try searching again.');
+              }
+            } else {
+              console.error('Invalid cached_results in localStorage:', 
+                            searchData.hasOwnProperty('cached_results'), 
+                            searchData.cached_results ? 
+                              (Array.isArray(searchData.cached_results) ? 'is array' : 'not array') : 
+                              'undefined');
+            }
+          } catch (error) {
+            console.error('Error restoring search from localStorage:', error);
+          }
+        }
+        return; // Don't continue with the rest of the JavaScript
+      }
+      
+      // If auto-restore is set, immediately restore the previous search
+      if (autoRestore) {
+        const savedSearch = localStorage.getItem('steamseek_last_search');
+        if (savedSearch) {
+          const searchData = JSON.parse(savedSearch);
+          
+          // Set the form values from saved search
+          document.querySelector('input[name="query"]').value = searchData.query;
+          if (searchData.filters) {
+            if (document.querySelector('select[name="genre"]')) {
+              document.querySelector('select[name="genre"]').value = searchData.filters.genre || 'All';
+            }
+            if (document.querySelector('select[name="release_year"]')) {
+              document.querySelector('select[name="release_year"]').value = searchData.filters.release_year || 'All';
+            }
+            if (document.querySelector('select[name="platform"]')) {
+              document.querySelector('select[name="platform"]').value = searchData.filters.platform || 'All';
+            }
+            if (document.querySelector('select[name="price"]')) {
+              document.querySelector('select[name="price"]').value = searchData.filters.price || 'All';
+            }
+            if (document.querySelector('select[name="sort_by"]')) {
+              document.querySelector('select[name="sort_by"]').value = searchData.filters.sort_by || 'Relevance';
+            }
+            
+            if (document.querySelector('select[name="result_limit"]')) {
+              document.querySelector('select[name="result_limit"]').value = searchData.filters.result_limit || '50';
+            }
+            
+            document.getElementById('useAiEnhanced').checked = searchData.filters.use_ai_enhanced || false;
+            document.getElementById('useDeepSearch').checked = searchData.filters.use_deep_search || false;
+            
+            // Make sure only one is checked
+            if (document.getElementById('useAiEnhanced').checked && 
+                document.getElementById('useDeepSearch').checked) {
+              document.getElementById('useAiEnhanced').checked = false;
+            }
+          }
+          
+          // Submit the form to run the search again
+          document.querySelector('form').submit();
+          return; // Don't continue with the rest of the initialization
+        }
+      }
+      
+      // Check for saved search results on page load if the current page has no results
+      if (CONFIG.hasNoResults) {
+        const savedSearch = localStorage.getItem('steamseek_last_search');
+        if (savedSearch) {
+          const searchData = JSON.parse(savedSearch);
+          const restoreResultsDiv = document.createElement('div');
+          restoreResultsDiv.className = 'alert alert-info mb-3';
+          restoreResultsDiv.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+              <span>You have a previous search for <strong>"${searchData.query}"</strong></span>
+              <button class="btn btn-primary btn-sm" id="restoreSearchBtn">
+                <i class="bi bi-arrow-clockwise"></i> Restore Previous Search
+              </button>
+            </div>
+          `;
+          document.querySelector('form').after(restoreResultsDiv);
+          
+          // Add event listener for the restore button
+          document.getElementById('restoreSearchBtn').addEventListener('click', function() {
+            // Set the form values from saved search
+            document.querySelector('input[name="query"]').value = searchData.query;
+            if (searchData.filters) {
+              if (document.querySelector('select[name="genre"]')) {
+                document.querySelector('select[name="genre"]').value = searchData.filters.genre || 'All';
+              }
+              if (document.querySelector('select[name="release_year"]')) {
+                document.querySelector('select[name="release_year"]').value = searchData.filters.release_year || 'All';
+              }
+              if (document.querySelector('select[name="platform"]')) {
+                document.querySelector('select[name="platform"]').value = searchData.filters.platform || 'All';
+              }
+              if (document.querySelector('select[name="price"]')) {
+                document.querySelector('select[name="price"]').value = searchData.filters.price || 'All';
+              }
+              if (document.querySelector('select[name="sort_by"]')) {
+                document.querySelector('select[name="sort_by"]').value = searchData.filters.sort_by || 'Relevance';
+              }
+              
+              if (document.querySelector('select[name="result_limit"]')) {
+                document.querySelector('select[name="result_limit"]').value = searchData.filters.result_limit || '50';
+              }
+              
+              document.getElementById('useAiEnhanced').checked = searchData.filters.use_ai_enhanced || false;
+              document.getElementById('useDeepSearch').checked = searchData.filters.use_deep_search || false;
+              
+              // Make sure only one is checked
+              if (document.getElementById('useAiEnhanced').checked && 
+                  document.getElementById('useDeepSearch').checked) {
+                document.getElementById('useAiEnhanced').checked = false;
+              }
+            }
+            
+            // Submit the form to run the search again
+            document.querySelector('form').submit();
+          });
+        }
+      } else if (CONFIG.hasResults) {
+        // Store search results when they are displayed
+        console.log('%c[STORAGE_DEBUG] Starting to save search results to localStorage', 'background: #abf; color: #333;');
+        console.log('%c[STORAGE_DEBUG] Results count to save:', 'background: #abf; color: #333;', CONFIG.results.length);
+        
+        try {
+          // Create a simplified version of the results with only the essential properties needed for displaying the UI
+          // This helps avoid circular references and excessive data
+          const simplifiedResults = CONFIG.results.map(game => ({
+            appid: game.appid,
+            name: game.name,
+            media: game.media,
+            genres: game.genres,
+            release_year: game.release_year,
+            price: game.price,
+            is_free: game.is_free,
+            pos_percent: game.pos_percent,
+            total_reviews: game.total_reviews,
+            ai_summary: game.ai_summary
+          }));
+          
+          // Log the size of the first simplified result for debugging
+          if (simplifiedResults.length > 0) {
+            const firstGameStr = JSON.stringify(simplifiedResults[0]);
+            console.log('%c[STORAGE_DEBUG] First game object size:', 'background: #abf; color: #333;', 
+                       `${(firstGameStr.length * 2 / 1024).toFixed(2)} KB`);
+          }
+          
+          const searchData = {
+            query: CONFIG.query,
+            filters: {
+              genre: CONFIG.selectedGenre,
+              release_year: CONFIG.selectedYear,
+              platform: CONFIG.selectedPlatform,
+              price: CONFIG.selectedPrice,
+              sort_by: CONFIG.sortBy,
+              result_limit: CONFIG.resultLimit,
+              use_ai_enhanced: CONFIG.useAiEnhanced,
+              use_deep_search: CONFIG.useDeepSearch
+            },
+            timestamp: new Date().toISOString(),
+            cached_results: simplifiedResults
+          };
+          
+          // Calculate total size before storing
+          const searchDataStr = JSON.stringify(searchData);
+          const totalSize = searchDataStr.length * 2; // UTF-16 uses 2 bytes per character
+          console.log('%c[STORAGE_DEBUG] Total size of search data to store:', 'background: #abf; color: #333;', 
+                     `${(totalSize / 1024 / 1024).toFixed(2)} MB`);
+          
+          // Check if we might be approaching localStorage limits (typically ~5MB)
+          if (totalSize > 4 * 1024 * 1024) { // 4MB warning threshold
+            console.warn('%c[STORAGE_DEBUG] WARNING: Search data is very large and may hit localStorage limits', 
+                        'background: #fd7; color: #333; font-weight: bold;');
+            
+            // Try to reduce the number of results to store
+            const maxResults = 25; // Try with fewer results
+            if (simplifiedResults.length > maxResults) {
+              console.log('%c[STORAGE_DEBUG] Reducing results from', 'background: #abf; color: #333;', 
+                         simplifiedResults.length, 'to', maxResults);
+              searchData.cached_results = simplifiedResults.slice(0, maxResults);
+              
+              // Recalculate size
+              const reducedDataStr = JSON.stringify(searchData);
+              console.log('%c[STORAGE_DEBUG] Reduced data size:', 'background: #abf; color: #333;', 
+                         `${(reducedDataStr.length * 2 / 1024 / 1024).toFixed(2)} MB`);
+            }
+          }
+          
+          localStorage.setItem('steamseek_last_search', JSON.stringify(searchData));
+          console.log('%c[STORAGE_DEBUG] ✅ Saved search results to localStorage successfully', 'background: #5d5; color: #333; font-weight: bold;');
+        } catch (e) {
+          console.error('%c[STORAGE_DEBUG] Error saving to localStorage:', 'background: #f55; color: white;', e);
+        }
+      }
+    });
+  </script>
+
+  <!-- Add JavaScript for polling the Deep Search status -->
+  {% if deep_search_active %}
+  <script>
+    // Start polling when the page loads
+    document.addEventListener('DOMContentLoaded', function() {
+      pollDeepSearchStatus();
+    });
+
+    function pollDeepSearchStatus() {
+      // Poll every 2 seconds
+      const interval = setInterval(function() {
+        fetch('/deep_search_status')
+          .then(response => response.json())
+          .then(data => {
+            // Update the progress bar
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = data.progress + '%';
+            
+            // Update the status text
+            document.getElementById('progressStatus').textContent = data.progress + '% Complete';
+            document.getElementById('deepSearchStep').textContent = data.current_step;
+            
+            // If there's an error, show it
+            if (data.error) {
+              clearInterval(interval);
+              document.getElementById('deepSearchProgress').classList.remove('alert-info');
+              document.getElementById('deepSearchProgress').classList.add('alert-danger');
+              document.getElementById('deepSearchStep').textContent = 'Error: ' + data.error;
+            }
+            
+            // If the search is ready for viewing, reload the page to show results
+            if (data.ready_for_viewing) {
+              clearInterval(interval);
+              
+              // Add a query parameter to indicate this is a result view, not a new search
+              const currentUrl = new URL(window.location.href);
+              
+              // Make sure to preserve the original query parameter
+              const originalQuery = document.querySelector('input[name="query"]').value;
+              currentUrl.searchParams.set('q', originalQuery);
+              currentUrl.searchParams.set('view_results', 'true');
+              
+              // Also preserve other search parameters
+              const genre = document.querySelector('select[name="genre"]').value;
+              const releaseYear = document.querySelector('select[name="release_year"]').value;
+              const platform = document.querySelector('select[name="platform"]').value;
+              const price = document.querySelector('select[name="price"]').value;
+              const sortBy = document.querySelector('select[name="sort_by"]').value;
+              
+              currentUrl.searchParams.set('genre', genre);
+              currentUrl.searchParams.set('release_year', releaseYear);
+              currentUrl.searchParams.set('platform', platform);
+              currentUrl.searchParams.set('price', price);
+              currentUrl.searchParams.set('sort_by', sortBy);
+              currentUrl.searchParams.set('use_deep_search', 'true');
+              
+              // Redirect to the same page but with all the necessary parameters
+              window.location.href = currentUrl.toString();
+            }
+          })
+          .catch(error => {
+            console.error('Error polling deep search status:', error);
+          });
+      }, 2000);
+    }
+  </script>
+  {% endif %}
+
+  <!-- JavaScript for game list management -->
+  {% if current_user.is_authenticated and results %}
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Initialize all modals to load lists when opened
+      initializeModals();
+    });
+    
+    // Function to initialize all modals - both server rendered and dynamically created
+    function initializeModals() {
+      // Set up event handlers for all create list buttons
+      document.body.addEventListener('click', function(event) {
+        // Check if the clicked element has an ID that starts with 'createListBtn-'
+        if (event.target.id && event.target.id.startsWith('createListBtn-')) {
+          const appid = event.target.id.split('-')[1];
+          createNewList(appid);
+        }
+        
+        // Handle save button clicks using event delegation
+        if (event.target.classList.contains('save-game-btn')) {
+          const appid = event.target.getAttribute('data-appid');
+          if (appid) {
+            saveGameToLists(appid);
+          }
+        }
+      });
+      
+      // Set up event handlers for all modals
+      document.querySelectorAll('[id^="saveGameModal-"]').forEach(function(modal) {
+        const appid = modal.id.split('-')[1];
+        
+        // Remove any existing listeners first to prevent duplicates
+        const newModal = new bootstrap.Modal(modal);
+        
+        modal.addEventListener('show.bs.modal', function() {
+          // Fetch the current lists for this game
+          fetchGameLists(appid);
+        });
+      });
+    }
+    
+    // Helper function to initialize dynamically created modals
+    function initializeDynamicModals() {
+      console.log("%c[MODAL_DEBUG] Starting dynamic modal initialization...", "background: #ddf; color: #333;");
+      
+      // Use a setTimeout to ensure DOM is fully ready
+      setTimeout(() => {
+        // First check if modals exist
+        const dynamicModals = document.querySelectorAll('[id^="saveGameModal-"]');
+        console.log("%c[MODAL_DEBUG] Found", "background: #ddf; color: #333;", dynamicModals.length, "dynamically created modals");
+        
+        if (dynamicModals.length > 0) {
+          console.log("%c[MODAL_DEBUG] Modal IDs:", "background: #ddf; color: #333;", 
+                      Array.from(dynamicModals).map(m => m.id).join(', '));
+          
+          // Initialize each modal
+          dynamicModals.forEach(modal => {
+            const appid = modal.id.split('-')[1];
+            console.log("%c[MODAL_DEBUG] Setting up modal for appid", "background: #ddf; color: #333;", appid);
+            
+            // Ensure modal is properly initialized with Bootstrap
+            try {
+              // Verify the modal structure is correct
+              const modalDialogExists = modal.querySelector('.modal-dialog');
+              const modalContentExists = modal.querySelector('.modal-content');
+              const modalBodyExists = modal.querySelector('.modal-body');
+              
+              console.log("%c[MODAL_DEBUG] Modal structure check:", "background: #ddf; color: #333;", 
+                         "dialog:", !!modalDialogExists, 
+                         "content:", !!modalContentExists, 
+                         "body:", !!modalBodyExists);
+              
+              if (!modalDialogExists || !modalContentExists || !modalBodyExists) {
+                console.error("%c[MODAL_DEBUG] Modal structure is incomplete!", "background: #f55; color: white;");
+              }
+              
+              console.log("%c[MODAL_DEBUG] Creating Bootstrap modal instance...", "background: #ddf; color: #333;");
+              new bootstrap.Modal(modal);
+              
+              // Add event listener for modal show
+              modal.addEventListener('show.bs.modal', function() {
+                console.log("%c[MODAL_DEBUG] Modal for", "background: #ddf; color: #333;", appid, "is being shown - fetching lists");
+                fetchGameLists(appid);
+              });
+              
+              console.log("%c[MODAL_DEBUG] Modal for appid", "background: #ddf; color: #333;", appid, "initialized successfully");
+            } catch (e) {
+              console.error("%c[MODAL_DEBUG] Error initializing modal for", "background: #f55; color: white;", appid, e);
+            }
+          });
+          
+          // Initialize any create list buttons in these modals
+          const createButtons = document.querySelectorAll('[id^="createListBtn-"]');
+          console.log("%c[MODAL_DEBUG] Found", "background: #ddf; color: #333;", createButtons.length, "create list buttons");
+          
+          createButtons.forEach(btn => {
+            const appid = btn.id.split('-')[1];
+            console.log("%c[MODAL_DEBUG] Setting up create list button for", "background: #ddf; color: #333;", appid);
+            
+            btn.addEventListener('click', function() {
+              console.log("%c[MODAL_DEBUG] Create list button clicked for", "background: #ddf; color: #333;", appid);
+              createNewList(appid);
+            });
+          });
+          
+          console.log("%c[MODAL_DEBUG] ✅ All modals initialized successfully", "background: #5d5; color: #333; font-weight: bold;");
+        } else {
+          console.warn("%c[MODAL_DEBUG] No dynamic modals found to initialize", "background: #fd7; color: #333;");
+        }
+      }, 500); // Wait 500ms to ensure DOM is ready
+    }
+    
+    // Function to create a new list
+    function createNewList(appid) {
+      const newListNameInput = document.getElementById(`newListName-${appid}`);
+      const existingListsDiv = document.getElementById(`existingLists-${appid}`);
+      const listName = newListNameInput.value.trim();
+      
+      if (!listName) {
+        alert('Please enter a list name.');
+        return;
+      }
+      
+      console.log(`Creating new list: ${listName} for game ${appid}`);
+      
+      // Send request to create a new list
+      fetch('/create_list', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: `list_name=${encodeURIComponent(listName)}`
+      })
+      .then(response => response.json())
+      .then(data => {
+        console.log('Create list response:', data);
+        if (data.success) {
+          // Add the new list to the checkboxes
+          const newCheckbox = document.createElement('div');
+          newCheckbox.className = 'form-check';
+          newCheckbox.innerHTML = `
+            <input class="form-check-input" type="checkbox" name="list_ids" value="${data.list_id}" id="list-${data.list_id}-${appid}" checked>
+            <label class="form-check-label" for="list-${data.list_id}-${appid}">
+              ${listName}
+            </label>
+          `;
+          existingListsDiv.appendChild(newCheckbox);
+          newListNameInput.value = '';
+        } else {
+          alert('Failed to create list: ' + data.error);
+        }
+      })
+      .catch(error => {
+        console.error('Error creating list:', error);
+        alert('An error occurred while creating the list.');
+      });
+    }
+    
+    // Function to fetch lists for a game
+    function fetchGameLists(appid) {
+      console.log(`=== FETCHING LISTS FOR GAME ${appid} ===`);
+      
+      // Get the container for lists
+      const existingListsDiv = document.getElementById(`existingLists-${appid}`);
+      if (!existingListsDiv) {
+        console.error(`Could not find existingLists-${appid} element`);
+        return;
+      }
+      
+      console.log(`Found container element: ${existingListsDiv.tagName}`);
+      
+      // Clear any previous content and show loading
+      existingListsDiv.innerHTML = `
+        <h6>Select Lists:</h6>
+        <p class="loading-lists">Loading your lists...</p>
+      `;
+      
+      // Make the API call with proper headers
+      fetch(`/api/game_lists/${appid}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        credentials: 'same-origin'
+      })
+      .then(response => {
+        console.log(`API response status: ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`HTTP error ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(lists => {
+        console.log(`Retrieved ${lists.length} lists for game ${appid}`);
+        
+        // Clear the loading message and add the header
+        existingListsDiv.innerHTML = '<h6>Select Lists:</h6>';
+        
+        // Show appropriate message if no lists
+        if (lists.length === 0) {
+          existingListsDiv.innerHTML += '<p>You don\'t have any lists yet. Create one below.</p>';
+        } else {
+          // Create checkboxes for each list
+          lists.forEach(list => {
+            console.log(`Creating checkbox for list: ${list.name}, checked: ${list.has_game}`);
+            const checkbox = document.createElement('div');
+            checkbox.className = 'form-check';
+            checkbox.innerHTML = `
+              <input class="form-check-input" type="checkbox" name="list_ids" value="${list.id}" 
+                id="list-${list.id}-${appid}" ${list.has_game ? 'checked' : ''}>
+              <label class="form-check-label" for="list-${list.id}-${appid}">
+                ${list.name}
+              </label>
+            `;
+            existingListsDiv.appendChild(checkbox);
+          });
+        }
+      })
+      .catch(error => {
+        console.error(`Error fetching game lists for appid ${appid}:`, error);
+        existingListsDiv.innerHTML = `
+          <h6>Select Lists:</h6>
+          <div class="alert alert-danger">
+            <p>Error loading lists: ${error.message}</p>
+            <button class="btn btn-sm btn-outline-primary mt-2" onclick="fetchGameLists('${appid}')">
+              <i class="bi bi-arrow-clockwise"></i> Retry
+            </button>
+          </div>
+        `;
+      });
+    }
+    
+    // Function to save games to lists via AJAX
+    function saveGameToLists(appid) {
+      console.log(`Saving game ${appid} to lists...`);
+      const form = document.getElementById(`saveGameForm-${appid}`);
+      const formData = new FormData(form);
+      const modal = document.getElementById(`saveGameModal-${appid}`);
+      
+      // Check form data
+      let hasLists = false;
+      for (const [key, value] of formData.entries()) {
+        console.log(`${key}: ${value}`);
+        if (key === 'list_ids') {
+          hasLists = true;
+        }
+      }
+      
+      if (!hasLists) {
+        alert('Please select at least one list');
+        return;
+      }
+      
+      // Handle the modal
+      let modalInstance;
+      try {
+        modalInstance = bootstrap.Modal.getInstance(modal);
+      } catch (e) {
+        console.error('Error getting modal instance:', e);
+        // Fallback to regular form submission
+        form.submit();
+        return;
+      }
+      
+      // Submit the form via AJAX
+      fetch(form.action, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        console.log('Response data:', data);
+        
+        // Close the modal
+        if (modalInstance) {
+          modalInstance.hide();
+        } else {
+          // Fallback for hiding the modal
+          $(modal).modal('hide');
+        }
+        
+        // Show a success/error toast notification
+        const toastContainer = document.createElement('div');
+        toastContainer.className = 'position-fixed bottom-0 end-0 p-3';
+        toastContainer.style.zIndex = 1070;
+        
+        const toastElement = document.createElement('div');
+        toastElement.className = `toast ${data.success ? 'bg-success' : 'bg-danger'} text-white`;
+        toastElement.setAttribute('role', 'alert');
+        toastElement.setAttribute('aria-live', 'assertive');
+        toastElement.setAttribute('aria-atomic', 'true');
+        
+        toastElement.innerHTML = `
+          <div class="toast-header ${data.success ? 'bg-success' : 'bg-danger'} text-white">
+            <strong class="me-auto">${data.success ? 'Success' : 'Error'}</strong>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+          </div>
+          <div class="toast-body">
+            ${data.message}
+          </div>
+        `;
+        
+        toastContainer.appendChild(toastElement);
+        document.body.appendChild(toastContainer);
+        
+        try {
+          const toast = new bootstrap.Toast(toastElement, { autohide: true, delay: 3000 });
+          toast.show();
+        } catch (e) {
+          console.error('Error showing toast:', e);
+          alert(data.message); // Fallback notification
+        }
+        
+        // Remove the toast container after it's hidden
+        toastElement.addEventListener('hidden.bs.toast', () => {
+          try {
+            document.body.removeChild(toastContainer);
+          } catch (e) {
+            console.error('Error removing toast container:', e);
+          }
+        });
+      })
+      .catch(error => {
+        console.error('Error saving game to lists:', error);
+        alert('An error occurred while saving the game to lists. Check console for details.');
+        
+        // Fallback to regular form submission on error
+        if (confirm('Retry using standard submission?')) {
+          form.submit();
+        }
+      });
+    }
+  </script>
   {% endif %}
 {% endblock %}
