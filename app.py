@@ -1865,10 +1865,18 @@ def delete_list(list_id):
 @login_required
 def save_game(appid):
     """Save a game to one or more lists"""
-    list_ids = request.form.getlist('list_ids')
+    # Check if this is an AJAX/JSON request
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('Content-Type') == 'application/json'
     
-    # Check if this is an AJAX request
-    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    # Get list IDs - first try JSON payload, then form data
+    list_ids = []
+    if request.is_json:
+        # Get from JSON body
+        data = request.json
+        list_ids = data.get('lists', [])
+    else:
+        # Get from form data
+        list_ids = request.form.getlist('list_ids')
     
     if not list_ids:
         if is_ajax:

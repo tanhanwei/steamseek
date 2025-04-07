@@ -1403,6 +1403,44 @@
       const previewContainer = document.getElementById('previewContainer');
       const notePreview = document.getElementById('notePreview');
       
+      // Toast notification helper function
+      function showToast(title, message, type) {
+        // Create toast container if it doesn't exist
+        let toastContainer = document.querySelector('.toast-container');
+        if (!toastContainer) {
+          toastContainer = document.createElement('div');
+          toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+          document.body.appendChild(toastContainer);
+        }
+        
+        // Create toast element
+        const toastEl = document.createElement('div');
+        toastEl.className = `toast align-items-center text-white bg-${type} border-0`;
+        toastEl.setAttribute('role', 'alert');
+        toastEl.setAttribute('aria-live', 'assertive');
+        toastEl.setAttribute('aria-atomic', 'true');
+        
+        toastEl.innerHTML = `
+          <div class="d-flex">
+            <div class="toast-body">
+              <strong>${title}:</strong> ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+          </div>
+        `;
+        
+        toastContainer.appendChild(toastEl);
+        
+        // Initialize and show the toast
+        const toast = new bootstrap.Toast(toastEl, { autohide: true, delay: 5000 });
+        toast.show();
+        
+        // Remove the toast after it's hidden
+        toastEl.addEventListener('hidden.bs.toast', function() {
+          toastEl.remove();
+        });
+      }
+      
       // Add event listeners to all game note buttons
       document.querySelectorAll('.game-note-btn').forEach(button => {
         console.log('Setting up note button for game:', button.getAttribute('data-game-name'));
@@ -1512,33 +1550,7 @@
         }
       });
       
-      // Update preview when typing (with debounce)
-      let previewTimeout;
-      noteTextarea.addEventListener('input', function() {
-        if (showPreviewCheckbox.checked) {
-          clearTimeout(previewTimeout);
-          previewTimeout = setTimeout(() => {
-            fetch('/api/render_markdown', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ markdown: noteTextarea.value })
-            })
-            .then(response => response.json())
-            .then(data => {
-              if (data.success) {
-                notePreview.innerHTML = data.html || '<p class="text-muted">Nothing to preview</p>';
-              }
-            })
-            .catch(error => {
-              console.error('Error rendering preview:', error);
-            });
-          }, 500);
-        }
-      });
-      
-      // Save note when save button is clicked
+      // Save button click handler
       saveBtn.addEventListener('click', function() {
         const appid = appIdInput.value;
         const note = noteTextarea.value.trim();
@@ -1558,36 +1570,27 @@
         .then(response => response.json())
         .then(data => {
           if (data.success) {
-            // Update the note collapse button and content
-            const collapseBtn = document.querySelector(`.collapse-note-btn[href="#gameNote-${appid}"]`);
-            const noteContent = document.querySelector(`#gameNote-${appid} .game-note-content`);
-            
-            if (note) {
-              // If there's a note, show the collapse button and update content
-              collapseBtn.classList.remove('d-none');
-              noteContent.innerHTML = data.html;
-              
-              // Show delete button
-              deleteBtn.style.display = 'block';
-            } else {
-              // If note is empty, hide the collapse button
-              collapseBtn.classList.add('d-none');
-              
-              // Hide delete button
-              deleteBtn.style.display = 'none';
-            }
-            
             // Close the modal
-            console.log('About to hide modal');
-            try {
-              modal.hide();
-              console.log('Modal hide() method called successfully');
-            } catch (e) {
-              console.error('Error hiding modal:', e);
-            }
+            modal.hide();
             
             // Show toast notification
             showToast('Success', 'Note saved successfully', 'success');
+            
+            // Show or hide the collapse button based on whether there's a note
+            const collapseBtn = document.querySelector(`.collapse-note-btn[href="#gameNote-${appid}"]`);
+            if (collapseBtn) {
+              if (note) {
+                collapseBtn.classList.remove('d-none');
+                
+                // Update the note content if it's on the page
+                const noteContent = document.querySelector(`#gameNote-${appid} .game-note-content`);
+                if (noteContent) {
+                  noteContent.innerHTML = data.html || note;
+                }
+              } else {
+                collapseBtn.classList.add('d-none');
+              }
+            }
           } else {
             showToast('Error', data.message || 'Failed to save note', 'danger');
           }
@@ -1603,51 +1606,48 @@
         });
       });
       
-      // Delete note when delete button is clicked
+      // Delete button functionality
       deleteBtn.addEventListener('click', function() {
+        // Show confirmation dialog
+        if (!confirm('Are you sure you want to delete this note?')) {
+          return;
+        }
+        
         const appid = appIdInput.value;
         
-        if (confirm('Are you sure you want to delete this note?')) {
-          // Show deleting state
-          deleteBtn.disabled = true;
-          deleteBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Deleting...';
-          
-          // Delete the note
-          fetch(`/api/game_note/${appid}`, {
-            method: 'DELETE'
-          })
-          .then(response => response.json())
-          .then(data => {
-            if (data.success) {
-              // Hide the collapse button
-              const collapseBtn = document.querySelector(`.collapse-note-btn[href="#gameNote-${appid}"]`);
+        // Delete the note
+        fetch(`/api/game_note/${appid}`, {
+          method: 'DELETE'
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            // Close the modal
+            modal.hide();
+            
+            // Show success message
+            showToast('Success', 'Note deleted successfully', 'success');
+            
+            // Hide the collapse button for this game
+            const collapseBtn = document.querySelector(`.collapse-note-btn[href="#gameNote-${appid}"]`);
+            if (collapseBtn) {
               collapseBtn.classList.add('d-none');
-              
-              // Close the modal
-              console.log('About to hide modal');
-              try {
-                modal.hide();
-                console.log('Modal hide() method called successfully');
-              } catch (e) {
-                console.error('Error hiding modal:', e);
-              }
-              
-              // Show toast notification
-              showToast('Success', 'Note deleted successfully', 'success');
-            } else {
-              showToast('Error', data.message || 'Failed to delete note', 'danger');
             }
-          })
-          .catch(error => {
-            console.error('Error deleting note:', error);
-            showToast('Error', 'Failed to delete note. Check console for details.', 'danger');
-          })
-          .finally(() => {
-            // Reset button state
-            deleteBtn.disabled = false;
-            deleteBtn.innerHTML = 'Delete Note';
-          });
-        }
+            
+            // Clear any displayed note content
+            const noteContent = document.querySelector(`#gameNote-${appid} .game-note-content`);
+            if (noteContent) {
+              noteContent.innerHTML = '';
+            }
+          } else {
+            console.error('Error deleting note:', data.message);
+            showToast('Error', data.message || 'Failed to delete note', 'danger');
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          showToast('Error', 'An unexpected error occurred', 'danger');
+        });
       });
       
       // Load notes for all games on page load
@@ -1684,43 +1684,248 @@
           });
       });
       
-      // Toast notification helper function
-      function showToast(title, message, type) {
-        // Create toast container if it doesn't exist
-        let toastContainer = document.querySelector('.toast-container');
-        if (!toastContainer) {
-          toastContainer = document.createElement('div');
-          toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
-          document.body.appendChild(toastContainer);
+      // Initialize the game list modals
+      document.querySelectorAll('[data-bs-target^="#saveGameModal-"]').forEach(button => {
+        const modalId = button.getAttribute('data-bs-target');
+        const modal = document.querySelector(modalId);
+        const appid = modalId.replace('#saveGameModal-', '');
+        
+        if (modal) {
+          // Add event listeners for both show.bs.modal (beginning of opening) and shown.bs.modal (fully opened)
+          // This ensures we don't miss the event and improves reliability
+          
+          // When modal begins to open
+          modal.addEventListener('show.bs.modal', function() {
+            console.log(`Modal ${modalId} is starting to open - loading lists for appid ${appid}`);
+            loadUserLists(appid);
+          });
         }
+      });
+      
+      // Function to load user lists for a game
+      function loadUserLists(appid) {
+        // Get the lists container
+        const listsContainer = document.getElementById(`existingLists-${appid}`);
         
-        // Create toast element
-        const toastEl = document.createElement('div');
-        toastEl.className = `toast align-items-center text-white bg-${type} border-0`;
-        toastEl.setAttribute('role', 'alert');
-        toastEl.setAttribute('aria-live', 'assertive');
-        toastEl.setAttribute('aria-atomic', 'true');
+        // Show loading state
+        listsContainer.innerHTML = '<p class="loading-lists">Loading your lists...</p>';
         
-        toastEl.innerHTML = `
-          <div class="d-flex">
-            <div class="toast-body">
-              <strong>${title}:</strong> ${message}
-            </div>
-            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-          </div>
-        `;
-        
-        toastContainer.appendChild(toastEl);
-        
-        // Initialize and show the toast
-        const toast = new bootstrap.Toast(toastEl, { autohide: true, delay: 5000 });
-        toast.show();
-        
-        // Remove the toast after it's hidden
-        toastEl.addEventListener('hidden.bs.toast', function() {
-          toastEl.remove();
-        });
+        // Fetch user lists from the API
+        fetch(`/api/game_lists/${appid}`)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error('Failed to load lists');
+            }
+            return response.json();
+          })
+          .then(lists => {
+            console.log(`Loaded ${lists.length} lists for appid ${appid}`);
+            
+            // Build HTML for lists
+            let html = '<h6>Select Lists:</h6>';
+            
+            if (lists.length === 0) {
+              html += '<p>You don\'t have any lists yet. Create one below.</p>';
+            } else {
+              html += '<div class="list-group mb-3">';
+              
+              lists.forEach(list => {
+                html += `
+                <div class="form-check mb-2">
+                  <input class="form-check-input" type="checkbox" 
+                         id="list-${appid}-${list.id}" 
+                         name="list_ids" 
+                         value="${list.id}" 
+                         ${list.has_game ? 'checked disabled' : ''}
+                         data-already-added="${list.has_game ? 'true' : 'false'}">
+                  <label class="form-check-label" for="list-${appid}-${list.id}">
+                    ${list.name} ${list.has_game ? '<small class="text-muted">(already added)</small>' : ''}
+                  </label>
+                </div>`;
+              });
+              
+              html += '</div>';
+            }
+            
+            // Update the lists container
+            listsContainer.innerHTML = html;
+          })
+          .catch(error => {
+            console.error(`Error loading lists for appid ${appid}:`, error);
+            listsContainer.innerHTML = `<p class="text-danger">Error loading lists: ${error.message}</p>`;
+          });
       }
+      
+      // Load user lists when a Save Game modal is opened (keep as backup)
+      document.addEventListener('shown.bs.modal', function(event) {
+        const modal = event.target;
+        
+        // Check if this is a save game modal
+        if (modal.id && modal.id.startsWith('saveGameModal-')) {
+          console.log('Save game modal opened:', modal.id);
+          
+          // Extract the app ID from the modal ID
+          const appid = modal.id.replace('saveGameModal-', '');
+          
+          // Check if lists are already loading/loaded
+          const listsContainer = document.getElementById(`existingLists-${appid}`);
+          const isLoading = listsContainer.querySelector('.loading-lists');
+          
+          // If we still see the loading indicator, load lists now
+          if (isLoading) {
+            loadUserLists(appid);
+          }
+        }
+      });
+      
+      // Handle Create List button click
+      document.addEventListener('click', function(event) {
+        if (event.target.id && event.target.id.startsWith('createListBtn-')) {
+          console.log('Create list button clicked:', event.target.id);
+          
+          // Extract the app ID from the button ID
+          const appid = event.target.id.replace('createListBtn-', '');
+          
+          // Get the input field
+          const nameInput = document.getElementById(`newListName-${appid}`);
+          const name = nameInput.value.trim();
+          
+          if (!name) {
+            showToast('Error', 'Please enter a list name', 'danger');
+            return;
+          }
+          
+          // Create the list
+          fetch('/create_list', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ name: name })
+          })
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              // Show success message
+              showToast('Success', 'List created successfully', 'success');
+              
+              // Clear the input
+              nameInput.value = '';
+              
+              // Add the new list to the existing lists
+              const listsContainer = document.getElementById(`existingLists-${appid}`);
+              
+              // If there was a "no lists" message, remove it
+              const noListsMessage = listsContainer.querySelector('p:not(.loading-lists)');
+              if (noListsMessage && noListsMessage.textContent.includes("don't have any lists")) {
+                noListsMessage.remove();
+              }
+              
+              // Check if we need to create the list-group container
+              let listGroup = listsContainer.querySelector('.list-group');
+              if (!listGroup) {
+                listGroup = document.createElement('div');
+                listGroup.className = 'list-group mb-3';
+                listsContainer.appendChild(listGroup);
+              }
+              
+              // Add the new list item
+              const newListItem = document.createElement('div');
+              newListItem.className = 'form-check mb-2';
+              newListItem.innerHTML = `
+                <input class="form-check-input" type="checkbox" 
+                       id="list-${appid}-${data.list_id}" 
+                       name="list_ids" 
+                       value="${data.list_id}" 
+                       checked
+                       data-already-added="false">
+                <label class="form-check-label" for="list-${appid}-${data.list_id}">
+                  ${name}
+                </label>
+              `;
+              
+              listGroup.appendChild(newListItem);
+            } else {
+              showToast('Error', data.message || 'Failed to create list', 'danger');
+            }
+          })
+          .catch(error => {
+            console.error('Error creating list:', error);
+            showToast('Error', 'An unexpected error occurred', 'danger');
+          });
+        }
+      });
+      
+      // Handle Save to Selected Lists button click
+      document.addEventListener('click', function(event) {
+        if (event.target.classList.contains('save-game-btn')) {
+          console.log('Save to Selected Lists button clicked');
+          
+          // Get the app ID
+          const appid = event.target.getAttribute('data-appid');
+          
+          // Get the selected lists
+          const checkboxes = document.querySelectorAll(`#saveGameModal-${appid} input[name="list_ids"]:checked`);
+          const listIds = Array.from(checkboxes).map(cb => cb.value);
+          
+          // Get already added game lists (disabled checkboxes) that we want to include automatically
+          const alreadyAddedCheckboxes = document.querySelectorAll(`#saveGameModal-${appid} input[name="list_ids"][data-already-added="true"]`);
+          const alreadyAddedListIds = Array.from(alreadyAddedCheckboxes).map(cb => cb.value);
+          
+          // Combine the lists, ensuring no duplicates
+          const allListIds = [...new Set([...listIds, ...alreadyAddedListIds])];
+          
+          if (allListIds.length === 0) {
+            showToast('Warning', 'Please select at least one list', 'warning');
+            return;
+          }
+          
+          // Show saving indicator
+          event.target.disabled = true;
+          event.target.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...';
+          
+          // Send the request
+          fetch(`/save_game/${appid}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({ lists: allListIds })
+          })
+          .then(response => {
+            if (!response.ok) {
+              throw new Error('Network response was not ok');
+            }
+            return response.json();
+          })
+          .then(data => {
+            // Reset button
+            event.target.disabled = false;
+            event.target.textContent = 'Save to Selected Lists';
+            
+            if (data.success) {
+              // Close the modal
+              const modalEl = document.getElementById(`saveGameModal-${appid}`);
+              const bsModal = bootstrap.Modal.getInstance(modalEl);
+              bsModal.hide();
+              
+              // Show success message
+              showToast('Success', data.message || 'Game saved to selected lists', 'success');
+            } else {
+              showToast('Error', data.message || 'Failed to save game to list(s)', 'danger');
+            }
+          })
+          .catch(error => {
+            // Reset button
+            event.target.disabled = false;
+            event.target.textContent = 'Save to Selected Lists';
+            
+            console.error('Error saving game to list:', error);
+            showToast('Error', 'An unexpected error occurred', 'danger');
+          });
+        }
+      });
     });
   </script>
   {% endif %}
