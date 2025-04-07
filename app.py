@@ -1816,6 +1816,52 @@ def render_markdown_api():
         traceback.print_exc()
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
+@app.route('/api/game_note/<appid>', methods=['GET', 'POST', 'DELETE'])
+@login_required
+def game_note_api(appid):
+    """API endpoint to manage game notes"""
+    try:
+        # GET request - retrieve the note
+        if request.method == 'GET':
+            note = current_user.get_game_note(appid)
+            return jsonify({'success': True, 'note': note})
+            
+        # POST request - save or update the note
+        elif request.method == 'POST':
+            data = request.json
+            if not data:
+                return jsonify({'success': False, 'message': 'No data provided'}), 400
+                
+            note_text = data.get('note', '').strip()
+            
+            # Save the note
+            result = current_user.save_game_note(appid, note_text)
+            
+            if result:
+                # If note was saved successfully, return the rendered HTML version too
+                html = markdown_filter(note_text) if note_text else ''
+                return jsonify({
+                    'success': True, 
+                    'message': 'Note saved successfully',
+                    'html': html
+                })
+            else:
+                return jsonify({'success': False, 'message': 'Failed to save note'}), 500
+                
+        # DELETE request - delete the note
+        elif request.method == 'DELETE':
+            result = current_user.delete_game_note(appid)
+            
+            if result:
+                return jsonify({'success': True, 'message': 'Note deleted successfully'})
+            else:
+                return jsonify({'success': False, 'message': 'Failed to delete note or note does not exist'}), 404
+                
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
 if __name__ == "__main__":
     # Make sure debug is True for development logging
     app.run(debug=True, threaded=True)

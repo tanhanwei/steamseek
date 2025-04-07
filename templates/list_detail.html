@@ -229,6 +229,32 @@
               <div class="d-flex gap-2 mt-2">
                 <a href="{{ url_for('detail', appid=game.appid) }}" class="btn btn-primary show-loader">Analyze</a>
                 <a href="https://www.youtube.com/results?search_query={{ game.name|replace(' ', '+') }}+gameplay" target="_blank" class="btn btn-danger">YouTube</a>
+                <button type="button" class="btn btn-info game-note-btn" data-appid="{{ game.appid }}" data-game-name="{{ game.name }}">
+                  <i class="bi bi-journal-text"></i> Notes
+                </button>
+              </div>
+
+              <!-- Game note collapse section -->
+              <div class="mt-2">
+                <a class="btn btn-outline-secondary btn-sm collapse-note-btn d-none" 
+                   data-bs-toggle="collapse" 
+                   href="#gameNote-{{ game.appid }}" 
+                   role="button" 
+                   aria-expanded="false" 
+                   aria-controls="gameNote-{{ game.appid }}">
+                  <i class="bi bi-journal-text"></i> Your Notes
+                </a>
+                <div class="collapse" id="gameNote-{{ game.appid }}">
+                  <div class="card card-body mt-2 game-note-content">
+                    <!-- Note content will be loaded here -->
+                    <div class="text-center">
+                      <div class="spinner-border spinner-border-sm" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                      </div>
+                      <p class="small text-muted mb-0">Loading your notes...</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -242,6 +268,385 @@
     </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block body_end %}
+  <!-- Game Note Modal -->
+  <div class="modal fade" id="gameNoteModal" tabindex="-1" aria-labelledby="gameNoteModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="gameNoteModalLabel">Notes for Game</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form id="gameNoteForm">
+            <input type="hidden" id="gameNoteAppId" value="">
+            <div class="mb-3">
+              <label for="gameNoteText" class="form-label">Your Notes</label>
+              <textarea class="form-control" id="gameNoteText" rows="8" placeholder="Add your notes about this game here..."></textarea>
+              <small class="text-muted">Markdown formatting is supported.</small>
+            </div>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" id="showPreview">
+              <label class="form-check-label" for="showPreview">
+                Show preview
+              </label>
+            </div>
+            <div id="previewContainer" class="card p-3 mb-3" style="display: none;">
+              <h6>Preview:</h6>
+              <div id="notePreview"></div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-danger" id="deleteNoteBtn">Delete Note</button>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="saveNoteBtn">Save Note</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Notes JavaScript -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Check if Bootstrap is properly loaded
+      console.log('DOMContentLoaded event fired on list page');
+      console.log('Bootstrap available:', typeof bootstrap !== 'undefined');
+      console.log('Bootstrap Modal available:', typeof bootstrap !== 'undefined' && typeof bootstrap.Modal !== 'undefined');
+      
+      // Get modal elements
+      const modalElement = document.getElementById('gameNoteModal');
+      console.log('Modal element exists:', !!modalElement);
+      
+      let modal;
+      try {
+        modal = new bootstrap.Modal(document.getElementById('gameNoteModal'));
+        console.log('Modal initialized successfully');
+      } catch (error) {
+        console.error('Failed to initialize modal:', error);
+      }
+      
+      // Get other modal elements
+      const modalTitle = document.getElementById('gameNoteModalLabel');
+      const appIdInput = document.getElementById('gameNoteAppId');
+      const noteTextarea = document.getElementById('gameNoteText');
+      const saveBtn = document.getElementById('saveNoteBtn');
+      const deleteBtn = document.getElementById('deleteNoteBtn');
+      const showPreviewCheckbox = document.getElementById('showPreview');
+      const previewContainer = document.getElementById('previewContainer');
+      const notePreview = document.getElementById('notePreview');
+      
+      // Add event listeners to all game note buttons
+      document.querySelectorAll('.game-note-btn').forEach(button => {
+        console.log('Setting up note button for game:', button.getAttribute('data-game-name'));
+        button.addEventListener('click', function(event) {
+          console.log('Note button clicked for game:', this.getAttribute('data-game-name'));
+          event.preventDefault(); // Prevent any default action
+          
+          const appid = this.getAttribute('data-appid');
+          const gameName = this.getAttribute('data-game-name');
+          
+          // Log the modal element to make sure it exists
+          console.log('Modal element:', document.getElementById('gameNoteModal'));
+          console.log('Bootstrap Modal object:', modal);
+          
+          // Update modal title and app ID
+          modalTitle.textContent = `Notes for ${gameName}`;
+          appIdInput.value = appid;
+          
+          // Clear the textarea
+          noteTextarea.value = '';
+          
+          // Reset the preview
+          showPreviewCheckbox.checked = false;
+          previewContainer.style.display = 'none';
+          
+          // Show loading state
+          noteTextarea.disabled = true;
+          noteTextarea.placeholder = 'Loading your notes...';
+          
+          // Load existing note if any
+          fetch(`/api/game_note/${appid}`)
+            .then(response => response.json())
+            .then(data => {
+              if (data.success) {
+                noteTextarea.value = data.note;
+                // Show the delete button only if there's an existing note
+                deleteBtn.style.display = data.note ? 'block' : 'none';
+              } else {
+                console.error('Error loading note:', data.message);
+              }
+            })
+            .catch(error => {
+              console.error('Error:', error);
+            })
+            .finally(() => {
+              // Reset loading state
+              noteTextarea.disabled = false;
+              noteTextarea.placeholder = 'Add your notes about this game here...';
+            });
+          
+          // Show the modal
+          console.log('About to show modal from list detail page');
+          try {
+            modal.show();
+            console.log('Modal show() method called successfully');
+          } catch (e) {
+            console.error('Error showing modal:', e);
+            
+            // Fallback method
+            try {
+              const modalElement = document.getElementById('gameNoteModal');
+              if (modalElement) {
+                console.log('Trying fallback: direct bootstrap.Modal.getInstance()');
+                const modalInstance = bootstrap.Modal.getInstance(modalElement);
+                if (modalInstance) {
+                  modalInstance.show();
+                  console.log('Fallback successful');
+                } else {
+                  console.log('No existing Modal instance found, creating new one');
+                  const newModal = new bootstrap.Modal(modalElement);
+                  newModal.show();
+                  console.log('New modal instance created and shown');
+                }
+              } else {
+                console.error('Modal element not found by ID');
+              }
+            } catch (fallbackError) {
+              console.error('Fallback error:', fallbackError);
+            }
+          }
+        });
+      });
+      
+      // Show/hide preview when checkbox is clicked
+      showPreviewCheckbox.addEventListener('change', function() {
+        if (this.checked) {
+          // If checked, render markdown preview
+          fetch('/api/render_markdown', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ markdown: noteTextarea.value })
+          })
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              notePreview.innerHTML = data.html || '<p class="text-muted">Nothing to preview</p>';
+              previewContainer.style.display = 'block';
+            }
+          })
+          .catch(error => {
+            console.error('Error rendering preview:', error);
+          });
+        } else {
+          // If unchecked, hide preview
+          previewContainer.style.display = 'none';
+        }
+      });
+      
+      // Update preview when typing (with debounce)
+      let previewTimeout;
+      noteTextarea.addEventListener('input', function() {
+        if (showPreviewCheckbox.checked) {
+          clearTimeout(previewTimeout);
+          previewTimeout = setTimeout(() => {
+            fetch('/api/render_markdown', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ markdown: noteTextarea.value })
+            })
+            .then(response => response.json())
+            .then(data => {
+              if (data.success) {
+                notePreview.innerHTML = data.html || '<p class="text-muted">Nothing to preview</p>';
+              }
+            })
+            .catch(error => {
+              console.error('Error rendering preview:', error);
+            });
+          }, 500);
+        }
+      });
+      
+      // Save note when save button is clicked
+      saveBtn.addEventListener('click', function() {
+        const appid = appIdInput.value;
+        const note = noteTextarea.value.trim();
+        
+        // Show saving state
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...';
+        
+        // Save the note
+        fetch(`/api/game_note/${appid}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ note: note })
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            // Update the note collapse button and content
+            const collapseBtn = document.querySelector(`.collapse-note-btn[href="#gameNote-${appid}"]`);
+            const noteContent = document.querySelector(`#gameNote-${appid} .game-note-content`);
+            
+            if (note) {
+              // If there's a note, show the collapse button and update content
+              collapseBtn.classList.remove('d-none');
+              noteContent.innerHTML = data.html;
+              
+              // Show delete button
+              deleteBtn.style.display = 'block';
+            } else {
+              // If note is empty, hide the collapse button
+              collapseBtn.classList.add('d-none');
+              
+              // Hide delete button
+              deleteBtn.style.display = 'none';
+            }
+            
+            // Close the modal
+            modal.hide();
+            
+            // Show toast notification
+            showToast('Success', 'Note saved successfully', 'success');
+          } else {
+            showToast('Error', data.message || 'Failed to save note', 'danger');
+          }
+        })
+        .catch(error => {
+          console.error('Error saving note:', error);
+          showToast('Error', 'Failed to save note. Check console for details.', 'danger');
+        })
+        .finally(() => {
+          // Reset button state
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = 'Save Note';
+        });
+      });
+      
+      // Delete note when delete button is clicked
+      deleteBtn.addEventListener('click', function() {
+        const appid = appIdInput.value;
+        
+        if (confirm('Are you sure you want to delete this note?')) {
+          // Show deleting state
+          deleteBtn.disabled = true;
+          deleteBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Deleting...';
+          
+          // Delete the note
+          fetch(`/api/game_note/${appid}`, {
+            method: 'DELETE'
+          })
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              // Hide the collapse button
+              const collapseBtn = document.querySelector(`.collapse-note-btn[href="#gameNote-${appid}"]`);
+              collapseBtn.classList.add('d-none');
+              
+              // Close the modal
+              modal.hide();
+              
+              // Show toast notification
+              showToast('Success', 'Note deleted successfully', 'success');
+            } else {
+              showToast('Error', data.message || 'Failed to delete note', 'danger');
+            }
+          })
+          .catch(error => {
+            console.error('Error deleting note:', error);
+            showToast('Error', 'Failed to delete note. Check console for details.', 'danger');
+          })
+          .finally(() => {
+            // Reset button state
+            deleteBtn.disabled = false;
+            deleteBtn.innerHTML = 'Delete Note';
+          });
+        }
+      });
+      
+      // Load notes for all games on page load
+      document.querySelectorAll('.game-note-btn').forEach(button => {
+        const appid = button.getAttribute('data-appid');
+        
+        fetch(`/api/game_note/${appid}`)
+          .then(response => response.json())
+          .then(data => {
+            if (data.success && data.note) {
+              // If there's a note, show the collapse button
+              const collapseBtn = document.querySelector(`.collapse-note-btn[href="#gameNote-${appid}"]`);
+              const noteContent = document.querySelector(`#gameNote-${appid} .game-note-content`);
+              
+              // Render the note
+              fetch('/api/render_markdown', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ markdown: data.note })
+              })
+              .then(response => response.json())
+              .then(renderData => {
+                if (renderData.success) {
+                  collapseBtn.classList.remove('d-none');
+                  noteContent.innerHTML = renderData.html;
+                }
+              });
+            }
+          })
+          .catch(error => {
+            console.error(`Error loading note for game ${appid}:`, error);
+          });
+      });
+      
+      // Toast notification helper function
+      function showToast(title, message, type) {
+        // Create toast container if it doesn't exist
+        let toastContainer = document.querySelector('.toast-container');
+        if (!toastContainer) {
+          toastContainer = document.createElement('div');
+          toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
+          document.body.appendChild(toastContainer);
+        }
+        
+        // Create toast element
+        const toastEl = document.createElement('div');
+        toastEl.className = `toast align-items-center text-white bg-${type} border-0`;
+        toastEl.setAttribute('role', 'alert');
+        toastEl.setAttribute('aria-live', 'assertive');
+        toastEl.setAttribute('aria-atomic', 'true');
+        
+        toastEl.innerHTML = `
+          <div class="d-flex">
+            <div class="toast-body">
+              <strong>${title}:</strong> ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+          </div>
+        `;
+        
+        toastContainer.appendChild(toastEl);
+        
+        // Initialize and show the toast
+        const toast = new bootstrap.Toast(toastEl, { autohide: true, delay: 5000 });
+        toast.show();
+        
+        // Remove the toast after it's hidden
+        toastEl.addEventListener('hidden.bs.toast', function() {
+          toastEl.remove();
+        });
+      }
+    });
+  </script>
 {% endblock %}
 
 {% block scripts %}
@@ -387,44 +792,6 @@
         });
       });
     });
-    
-    // Toast notification helper
-    function showToast(title, message, type) {
-      // Create toast container if it doesn't exist
-      let toastContainer = document.querySelector('.toast-container');
-      if (!toastContainer) {
-        toastContainer = document.createElement('div');
-        toastContainer.className = 'toast-container position-fixed bottom-0 end-0 p-3';
-        document.body.appendChild(toastContainer);
-      }
-      
-      // Create toast element
-      const toastEl = document.createElement('div');
-      toastEl.className = `toast align-items-center text-white bg-${type} border-0`;
-      toastEl.setAttribute('role', 'alert');
-      toastEl.setAttribute('aria-live', 'assertive');
-      toastEl.setAttribute('aria-atomic', 'true');
-      
-      toastEl.innerHTML = `
-        <div class="d-flex">
-          <div class="toast-body">
-            <strong>${title}:</strong> ${message}
-          </div>
-          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-        </div>
-      `;
-      
-      toastContainer.appendChild(toastEl);
-      
-      // Initialize and show the toast
-      const toast = new bootstrap.Toast(toastEl, { autohide: true, delay: 5000 });
-      toast.show();
-      
-      // Remove the toast after it's hidden
-      toastEl.addEventListener('hidden.bs.toast', function() {
-        toastEl.remove();
-      });
-    }
   });
 </script>
 {% endblock %} 

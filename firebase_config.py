@@ -258,4 +258,64 @@ class User(UserMixin):
             print(f"Error updating list metadata: {e}")
             import traceback
             traceback.print_exc()
+            return False
+            
+    def save_game_note(self, appid, note_text):
+        """Save or update a note for a specific game"""
+        try:
+            # Create a document in the user's game_notes collection
+            notes_ref = db.collection('users').document(self.id).collection('game_notes').document(str(appid))
+            
+            notes_data = {
+                'appid': str(appid),
+                'note': note_text,
+                'updated_at': firestore.SERVER_TIMESTAMP
+            }
+            
+            # If this is a new note, add created_at
+            note_doc = notes_ref.get()
+            if not note_doc.exists:
+                notes_data['created_at'] = firestore.SERVER_TIMESTAMP
+                
+            # Save the note
+            notes_ref.set(notes_data, merge=True)
+            
+            print(f"Successfully saved note for game {appid}")
+            return True
+        except Exception as e:
+            print(f"Error saving game note: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+            
+    def get_game_note(self, appid):
+        """Get a user's note for a specific game"""
+        try:
+            note_ref = db.collection('users').document(self.id).collection('game_notes').document(str(appid))
+            note_doc = note_ref.get()
+            
+            if note_doc.exists:
+                note_data = note_doc.to_dict()
+                return note_data.get('note', '')
+            else:
+                return ''
+        except Exception as e:
+            print(f"Error retrieving game note: {e}")
+            return ''
+            
+    def delete_game_note(self, appid):
+        """Delete a note for a specific game"""
+        try:
+            note_ref = db.collection('users').document(self.id).collection('game_notes').document(str(appid))
+            note_doc = note_ref.get()
+            
+            if note_doc.exists:
+                note_ref.delete()
+                print(f"Successfully deleted note for game {appid}")
+                return True
+            else:
+                print(f"No note found for game {appid}")
+                return False
+        except Exception as e:
+            print(f"Error deleting game note: {e}")
             return False 
