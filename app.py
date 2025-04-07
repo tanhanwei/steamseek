@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, Response, flash
+﻿from flask import Flask, render_template, request, redirect, url_for, session, jsonify, Response, flash
 from markupsafe import Markup
 import os
 import json
@@ -170,7 +170,7 @@ def deep_search_background_task(query, search_params):
         
         # Step 2: Run searches for each variation
         combined_results = OrderedDict()  # Use OrderedDict to avoid duplicate games
-        successful_variations = 0  # Track how many variations were searched successfully
+        successful_variations = 0
         
         for i, variation in enumerate(variations):
             # Check if the search is still valid
@@ -181,6 +181,9 @@ def deep_search_background_task(query, search_params):
             step_num = i + 1  # +1 because we started at step 1 with variation generation
             deep_search_status["progress"] = int(10 + (70 * step_num / total_variations))
             deep_search_status["current_step"] = f"Searching with variation {step_num}/{total_variations}: '{variation}'"
+            
+            # Add a small delay to ensure the frontend can see the progress update
+            time.sleep(0.5)
             
             try:
                 # Get the search results for this variation
@@ -260,10 +263,18 @@ def deep_search_background_task(query, search_params):
                         
                 # Update the status with the final results (only if this is still the active search)
                 if deep_search_status["session_id"] == session_id:
-                    deep_search_status["results"] = reranked_results
-                    deep_search_status["grand_summary"] = grand_summary
-                    # Double-check that the original_query is still properly set
-                    deep_search_status["original_query"] = original_query
+                    # Make sure all necessary fields are updated
+                    deep_search_status.update({
+                        "results": reranked_results,
+                        "grand_summary": grand_summary,
+                        "original_query": original_query,
+                        "progress": 100,
+                        "current_step": "Completed",
+                        "completed": True,
+                        "active": False,
+                        "results_served": False,  # Reset the served flag
+                        "error": None
+                    })
                     print(f"Final result count: {len(reranked_results)}, Grand summary length: {len(grand_summary)}")
             except Exception as e:
                 print(f"Error generating final summary: {str(e)}")
@@ -272,37 +283,51 @@ def deep_search_background_task(query, search_params):
                 
                 # If summary generation fails, still return the results but with a default message
                 if deep_search_status["session_id"] == session_id:
-                    deep_search_status["results"] = all_results
-                    deep_search_status["grand_summary"] = f"Found {len(all_results)} games matching your query. The summary generation encountered an error: {str(e)}"
-                    # Make sure original query is set
-                    deep_search_status["original_query"] = original_query
+                    # Make sure all necessary fields are updated
+                    deep_search_status.update({
+                        "results": all_results,
+                        "grand_summary": f"Found {len(all_results)} games matching your query. The summary generation encountered an error: {str(e)}",
+                        "original_query": original_query,
+                        "progress": 100,
+                        "current_step": "Completed (with errors)",
+                        "completed": True,
+                        "active": False,
+                        "results_served": False,
+                        "error": str(e)
+                    })
         else:
             if deep_search_status["session_id"] == session_id:
-                deep_search_status["results"] = []
-                deep_search_status["grand_summary"] = "No games found matching your query."
-                deep_search_status["original_query"] = original_query
+                # Make sure all necessary fields are updated
+                deep_search_status.update({
+                    "results": [],
+                    "grand_summary": "No games found matching your query.",
+                    "original_query": original_query,
+                    "progress": 100,
+                    "current_step": "Completed (no results)",
+                    "completed": True,
+                    "active": False,
+                    "results_served": False,
+                    "error": "No games found matching your query."
+                })
         
-        # Mark the search as completed (only if this is still the active search)
-        if deep_search_status["session_id"] == session_id:
-            deep_search_status["progress"] = 100
-            deep_search_status["current_step"] = "Completed"
-            deep_search_status["completed"] = True
-            deep_search_status["results_served"] = False  # Reset the served flag
-            print(f"\n==== DEEP SEARCH COMPLETED FOR: '{original_query}' (Session: {session_id}) ====\n")
-            print(f"Ready for viewing: query='{deep_search_status['original_query']}', result count={len(deep_search_status['results'])}")
-            
+        # Add a delay to make sure final status update is seen
+        time.sleep(1)
+        
+        print(f"\n==== DEEP SEARCH COMPLETED FOR: '{original_query}' (Session: {session_id}) ====\n")
+        print(f"Ready for viewing: query='{deep_search_status['original_query']}', result count={len(deep_search_status['results'])}")
     except Exception as e:
+        print(f"Unexpected error in deep search background task: {str(e)}")
         import traceback
-        error_details = traceback.format_exc()
-        if deep_search_status["session_id"] == session_id:
-            deep_search_status["error"] = str(e)
-            deep_search_status["current_step"] = f"Error: {str(e)}"
-        print(f"Deep search error in session {session_id}: {str(e)}")
-        print(error_details)
-    finally:
-        # Only deactivate if this is still the current session
-        if deep_search_status["session_id"] == session_id:
-            deep_search_status["active"] = False
+        print(traceback.format_exc())
+        
+        # Update status to show the error
+        deep_search_status.update({
+            "error": f"An unexpected error occurred: {str(e)}",
+            "progress": 100,
+            "current_step": "Error occurred",
+            "completed": True,
+            "active": False
+        })
 
 #############################################
 # Search Helper with Filtering and Sorting
@@ -535,7 +560,8 @@ def perform_search(query, selected_genre="All", selected_year="All", selected_pl
         pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
 
         media = [] # Extract media... (keep existing logic)
-        if game_data.get("header_image"): media.append(force_https(game_data["header_image"]))
+        if game_data.get("header_image"): 
+            media.append(force_https(game_data["header_image"]))
         if isinstance(game_data.get("screenshots"), list):
             for s in game_data["screenshots"]:
                 if isinstance(s, dict) and s.get("path_full"):
@@ -562,31 +588,39 @@ def perform_search(query, selected_genre="All", selected_year="All", selected_pl
 
         genres = [] # Extract genres... (keep existing logic)
         if "store_data" in game_data and isinstance(game_data["store_data"], dict):
-             genre_list = game_data["store_data"].get("genres", [])
-             genres = [g.get("description") for g in genre_list if g.get("description")]
+            genre_list = game_data["store_data"].get("genres", [])
+            genres = [g.get("description") for g in genre_list if g.get("description")]
 
         release_date_str = game_data.get("release_date", "") # Extract year... (keep existing logic)
         year = "Unknown"
         if release_date_str:
-             try: year = release_date_str.split(",")[-1].strip()
-             except: pass
+            try: 
+                year = release_date_str.split(",")[-1].strip()
+            except: 
+                pass
 
         platforms = game_data.get("store_data", {}).get("platforms", {}) # Extract platforms...
 
         is_free = game_data.get("store_data", {}).get("is_free", False) # Extract price...
         price = 0.0
         if not is_free:
-             price_overview = game_data.get("store_data", {}).get("price_overview", {})
-             if price_overview: price = price_overview.get("final", 0) / 100.0
+            price_overview = game_data.get("store_data", {}).get("price_overview", {})
+            if price_overview: 
+                price = price_overview.get("final", 0) / 100.0
 
         # --- Apply Filters ---
-        if selected_genre != "All" and selected_genre not in genres: continue
-        if selected_year != "All" and year != selected_year: continue
+        if selected_genre != "All" and selected_genre not in genres: 
+            continue
+        if selected_year != "All" and year != selected_year: 
+            continue
         if selected_platform != "All":
             platform_key = selected_platform.lower()
-            if not platforms.get(platform_key, False): continue
-        if selected_price == "Free" and not is_free: continue
-        if selected_price == "Paid" and is_free: continue
+            if not platforms.get(platform_key, False): 
+                continue
+        if selected_price == "Free" and not is_free: 
+            continue
+        if selected_price == "Paid" and is_free: 
+            continue
 
         # --- If filters pass, store the result ---
         results_dict[appid] = {
@@ -648,12 +682,18 @@ def get_deep_search_status():
     
     status_copy = dict(deep_search_status)  # Make a copy to avoid thread issues
     
-    # If this status poll is for a completed search and it hasn't been
-    # marked as served yet, don't mark it as served here - let the main
-    # search route handle that when the user actually views the results
+    # Ensure all necessary fields are present
+    if "progress" not in status_copy:
+        status_copy["progress"] = 0
+    
+    if "current_step" not in status_copy:
+        status_copy["current_step"] = "Initializing..."
+    
+    if "completed" not in status_copy:
+        status_copy["completed"] = False
     
     # Add a client_friendly field to indicate search is ready for viewing
-    status_copy["ready_for_viewing"] = status_copy["completed"] and not status_copy["results_served"]
+    status_copy["ready_for_viewing"] = status_copy.get("completed", False) and not status_copy.get("results_served", False)
     
     # For security/performance reasons, don't include the full results
     # in the status JSON (they can be large)
@@ -977,10 +1017,19 @@ def search():
     use_deep_search = False
     show_previous_search = False
     deep_search_active = False
+    regular_search_active = False
     restored_from_cache = False
     result_limit = 50
+    previous_results = []  # Instead of getting from session, initialize as empty list
     
     global deep_search_status
+    global regular_search_status
+
+    # Check if this is an AJAX request
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    no_reload = request.args.get('no_reload') == 'true' or request.form.get('no_reload') == 'true'
+    
+    print(f"Request type: {'AJAX' if is_ajax else 'Regular'}, no_reload: {no_reload}")
 
     # Special case for ?restore=true - just show the form with data from previous session,
     # without triggering a new search
@@ -1034,27 +1083,10 @@ def search():
                     "use_deep_search": False  # Set to False since we're using cached results
                 }
             }
+            
+            # Don't save large result sets in session
+            # session['previous_results'] = results  # REMOVED
         elif query:
-            results, explanation = perform_search(
-                query, 
-                selected_genre, 
-                selected_year, 
-                selected_platform, 
-                selected_price, 
-                sort_by,
-                use_ai_enhanced,
-                use_deep_search,
-                limit=result_limit
-            )
-            
-            # For AI Enhanced, the explanation is the optimization explanation
-            # For Deep Search, the explanation is a status message (and results will be empty)
-            if use_ai_enhanced:
-                optimization_explanation = explanation
-            elif use_deep_search:
-                deep_search_active = True
-                optimization_explanation = explanation  # Initial status message
-            
             # Store search parameters in session
             session["last_search"] = {
                 "query": query,
@@ -1069,9 +1101,188 @@ def search():
                     "use_deep_search": use_deep_search
                 }
             }
+            
+            # Store current results as previous results before starting a new search
+            # We won't use session for this anymore
+            # if 'results' in session and session['results']:
+            #     previous_results = session['results']
+            # else:
+            #     previous_results = results  # Use current results as previous results
+            
+            # Don't store results in session anymore
+            # session['previous_results'] = previous_results  # REMOVED
+            
+            session['previous_results'] = previous_results
+            
+            if use_deep_search:
+                # Start a deep search
+                deep_search_active = True
+                # Reset deep search status
+                deep_search_status.clear()
+                deep_search_status.update({
+                    "active": True,
+                    "progress": 0,
+                    "total_steps": 0,
+                    "current_step": "Initializing Deep Search",
+                    "results": [],
+                    "grand_summary": "",
+                    "original_query": query,  # Set the original query
+                    "completed": False,
+                    "error": None,
+                    "session_id": None,  # Will be set in the background task
+                    "results_served": False  # Reset the served flag
+                })
+                
+                # Start the background task
+                search_params = {
+                    "genre": selected_genre,
+                    "year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                }
+                thread = Thread(target=deep_search_background_task, args=(query, search_params))
+                thread.daemon = True
+                thread.start()
+                
+                # Keep previous results visible while searching
+                results = previous_results
+                optimization_explanation = "Deep Search started. Please wait while we find the best results for you."
+            elif use_ai_enhanced:
+                # Start an AI enhanced search
+                regular_search_active = True
+                
+                # Reset regular search status
+                regular_search_status.clear()
+                regular_search_status.update({
+                    "active": True,
+                    "progress": 0,
+                    "current_step": "Initializing",
+                    "search_type": "ai_enhanced",
+                    "query": query,
+                    "completed": False,
+                    "error": None,
+                    "session_id": str(uuid.uuid4()),  # Generate a new session ID
+                    "optimization_explanation": ""
+                })
+                
+                # Prepare search parameters
+                search_params = {
+                    "genre": selected_genre,
+                    "year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                    "sort_by": sort_by,
+                    "result_limit": result_limit
+                }
+                
+                # Start the background task
+                thread = Thread(target=regular_search_background_task, args=(query, search_params, use_ai_enhanced))
+                thread.daemon = True
+                thread.start()
+                
+                # Keep previous results visible while searching
+                results = previous_results
+                optimization_explanation = "AI Enhanced search started. Please wait for results..."
+            else:
+                # For standard search, run it immediately without background thread
+                print(f"Running standard search for query: '{query}'")
+                
+                # Perform the search directly (not in background)
+                # We'll use the existing perform_search function
+                results, _ = perform_search(
+                    query, 
+                    selected_genre, 
+                    selected_year, 
+                    selected_platform, 
+                    selected_price, 
+                    sort_by,
+                    use_ai_enhanced=False,
+                    use_deep_search=False,
+                    save_to_status=False,
+                    limit=result_limit
+                )
+                
+                # Don't save results in session anymore
+                # session['previous_results'] = results  # REMOVED
+                # session['results'] = results  # REMOVED
+                
+                print(f"Standard search completed with {len(results)} results")
+                
+                # If this is an AJAX request, return just the results HTML
+                if is_ajax and no_reload:
+                    print("Rendering partial results for AJAX request")
+                    return render_template(
+                        "search.html", 
+                        query=query, 
+                        results=results,
+                        selected_genre=selected_genre, 
+                        selected_year=selected_year,
+                        selected_platform=selected_platform, 
+                        selected_price=selected_price,
+                        sort_by=sort_by,
+                        use_ai_enhanced=False,
+                        use_deep_search=False,
+                        optimization_explanation="",
+                        grand_summary="",
+                        deep_search_active=False,
+                        regular_search_active=False,
+                        show_previous_search=False,
+                        restored_from_cache=False,
+                        result_limit=result_limit,
+                        is_partial_results=True  # Flag to indicate this is a partial render
+                    )
         else:
             session.pop("last_search", None)
     elif request.method == "GET":
+        # Handle regular GET requests as before
+        # ... [rest of the GET handling code remains the same]
+
+        # Added special case for AJAX standard search
+        if query and is_ajax and no_reload and not use_ai_enhanced and not use_deep_search:
+            print(f"Running standard search via AJAX GET for query: '{query}'")
+            
+            # Perform the search directly
+            results, _ = perform_search(
+                query, 
+                selected_genre, 
+                selected_year, 
+                selected_platform, 
+                selected_price, 
+                sort_by,
+                use_ai_enhanced=False,
+                use_deep_search=False,
+                save_to_status=False,
+                limit=result_limit
+            )
+            
+            # Don't save results in session anymore
+            # session['previous_results'] = results  # REMOVED
+            # session['results'] = results  # REMOVED
+            
+            print(f"AJAX standard search completed with {len(results)} results")
+            
+            # Return just the results HTML for AJAX
+            return render_template(
+                "search.html", 
+                query=query, 
+                results=results,
+                selected_genre=selected_genre, 
+                selected_year=selected_year,
+                selected_platform=selected_platform, 
+                selected_price=selected_price,
+                sort_by=sort_by,
+                use_ai_enhanced=False,
+                use_deep_search=False,
+                optimization_explanation="",
+                grand_summary="",
+                deep_search_active=False,
+                regular_search_active=False,
+                show_previous_search=False,
+                restored_from_cache=False,
+                result_limit=result_limit,
+                is_partial_results=True  # Flag to indicate this is a partial render
+            )
+        
         # Check if this is a view_results request from the JavaScript redirect
         view_results = request.args.get("view_results") == "true"
         
@@ -1098,14 +1309,31 @@ def search():
         print(f"GET request - Query: '{query}', View Results: {view_results}, Run Search: {run_search}, Deep Search Status: completed={deep_search_status['completed']}, original_query='{deep_search_status['original_query']}'")
         
         # Special handling for view_results parameter - this means we're coming from 
-        # a completed deep search and should display its results without restarting it
-        if view_results and deep_search_status["completed"] and query and query.lower() == deep_search_status["original_query"].lower():
-            print(f"Showing completed deep search results for query: '{query}' (view_results=true)")
-            results = deep_search_status["results"]
-            grand_summary = deep_search_status["grand_summary"]
-            deep_search_active = False
-            deep_search_status["results_served"] = True  # Mark as served to prevent reuse
-            use_deep_search = False  # Reset the flag since we're just viewing results
+        # a completed deep search or regular search and should display its results without restarting it
+        if view_results and query:
+            # For deep search results
+            if deep_search_status["completed"] and query.lower() == deep_search_status["original_query"].lower():
+                print(f"Showing completed deep search results for query: '{query}' (view_results=true)")
+                results = deep_search_status["results"]
+                grand_summary = deep_search_status["grand_summary"]
+                deep_search_active = False
+                deep_search_status["results_served"] = True  # Mark as served to prevent reuse
+                use_deep_search = False  # Reset the flag since we're just viewing results
+                
+                # Don't save large result sets in session
+                # session['previous_results'] = results  # REMOVED
+            
+            # For regular/AI enhanced search results    
+            elif regular_search_status["completed"] and query.lower() == regular_search_status["query"].lower():
+                print(f"Showing completed regular search results for query: '{query}' (view_results=true)")
+                
+                # Use the stored results from the completed background task
+                results = regular_search_status["results"]
+                optimization_explanation = regular_search_status["optimization_explanation"]
+                regular_search_active = False
+                
+                # Don't save large result sets in session
+                # session['previous_results'] = results  # REMOVED
             
             # Store search parameters in session
             session["last_search"] = {
@@ -1122,7 +1350,7 @@ def search():
                 }
             }
             
-            print(f"Results prepared: {len(results)} games, Grand Summary: {len(grand_summary)} chars")
+            print(f"Results prepared: {len(results)} games")
         # Check if we have a completed deep search with the same query that hasn't been served
         elif query and deep_search_status["completed"] and not deep_search_status["results_served"] and query.lower() == deep_search_status["original_query"].lower():
             # Use the completed deep search results instead of starting a new search
@@ -1131,6 +1359,9 @@ def search():
             grand_summary = deep_search_status["grand_summary"]
             deep_search_active = False
             deep_search_status["results_served"] = True  # Mark as served to prevent reuse
+            
+            # Save these results for future reference
+            # session['previous_results'] = results  # REMOVED - don't use session for large data
             
             # Store search parameters in session
             session["last_search"] = {
@@ -1151,24 +1382,6 @@ def search():
         elif query and (run_search or request.args.get("q")):
             # Execute search if query is provided AND either run_search flag is set OR query is in the URL
             print(f"Running search for query: '{query}' (explicit run from URL parameters)")
-            results, explanation = perform_search(
-                query, 
-                selected_genre, 
-                selected_year, 
-                selected_platform, 
-                selected_price, 
-                sort_by,
-                use_ai_enhanced,
-                use_deep_search,
-                limit=result_limit
-            )
-            
-            # Handle explanation based on search mode
-            if use_ai_enhanced:
-                optimization_explanation = explanation
-            elif use_deep_search:
-                deep_search_active = True
-                optimization_explanation = explanation
             
             # Store parameters in session
             session["last_search"] = {
@@ -1184,6 +1397,100 @@ def search():
                     "use_deep_search": use_deep_search
                 }
             }
+            
+            # Store current results as previous results before starting a new search
+            previous_results = session.get('previous_results', [])
+            
+            if use_deep_search:
+                # Start a deep search
+                deep_search_active = True
+                # Reset deep search status
+                deep_search_status.clear()
+                deep_search_status.update({
+                    "active": True,
+                    "progress": 0,
+                    "total_steps": 0,
+                    "current_step": "Initializing Deep Search",
+                    "results": [],
+                    "grand_summary": "",
+                    "original_query": query,
+                    "completed": False,
+                    "error": None,
+                    "session_id": None,  # Will be set in the background task
+                    "results_served": False
+                })
+                
+                # Start the background task
+                search_params = {
+                    "genre": selected_genre,
+                    "year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                }
+                thread = Thread(target=deep_search_background_task, args=(query, search_params))
+                thread.daemon = True
+                thread.start()
+                
+                # Keep previous results visible while searching
+                results = previous_results
+                optimization_explanation = "Deep Search started. Please wait while we find the best results for you."
+            elif use_ai_enhanced:
+                # Start a regular or AI enhanced search
+                regular_search_active = True
+                
+                # Reset regular search status
+                regular_search_status.clear()
+                regular_search_status.update({
+                    "active": True,
+                    "progress": 0,
+                    "current_step": "Initializing",
+                    "search_type": "ai_enhanced",
+                    "query": query,
+                    "completed": False,
+                    "error": None,
+                    "session_id": str(uuid.uuid4()),  # Generate a new session ID
+                    "optimization_explanation": ""
+                })
+                
+                # Prepare search parameters
+                search_params = {
+                    "genre": selected_genre,
+                    "year": selected_year,
+                    "platform": selected_platform,
+                    "price": selected_price,
+                    "sort_by": sort_by,
+                    "result_limit": result_limit
+                }
+                
+                # Start the background task
+                thread = Thread(target=regular_search_background_task, args=(query, search_params, use_ai_enhanced))
+                thread.daemon = True
+                thread.start()
+                
+                # Keep previous results visible while searching
+                results = previous_results
+                optimization_explanation = "AI Enhanced search started. Please wait for results..."
+            else:
+                # For standard search, run it immediately
+                print(f"Running standard search for query: '{query}' (via GET request)")
+                
+                # Perform the search directly (not in background)
+                results, _ = perform_search(
+                    query, 
+                    selected_genre, 
+                    selected_year, 
+                    selected_platform, 
+                    selected_price, 
+                    sort_by,
+                    use_ai_enhanced=False,
+                    use_deep_search=False,
+                    save_to_status=False,
+                    limit=result_limit
+                )
+                
+                # Don't save results in session anymore
+                # session['previous_results'] = results  # REMOVED
+                # session['results'] = results  # REMOVED
         elif "last_search" in session and not query:
             # If there's a previous search in session and no new query provided,
             # just restore the previous search parameters (don't re-run the search)
@@ -1201,9 +1508,30 @@ def search():
                 use_deep_search = filters.get("use_deep_search", False)
                 show_previous_search = True
                 
+                # We won't use session for storing results anymore
+                # results = session['previous_results']  # REMOVED
+                
                 # Only show this message when we're displaying a previous search form
                 if show_previous_search:
                     optimization_explanation = "Your previous search is ready to run again"
+    
+    # Save current results in session for future reference
+    # session['results'] = results  # REMOVED - don't use session for large data
+    
+    # If AJAX request that just need the results, check template option
+    # This is different from the partial results case - it's for when the template itself 
+    # is requested to include only specific parts
+    if 'template' in request.args and is_ajax:
+        template_name = request.args.get('template')
+        if template_name == 'results_only':
+            print("Rendering results-only template for AJAX")
+            return render_template(
+                "search_results_partial.html", 
+                results=results
+            )
+    
+    # Don't save results in session anymore
+    # session['results'] = results  # REMOVED
     
     print(f"Final template values: Results: {len(results)}, Has Grand Summary: {'Yes' if grand_summary else 'No'}")
     return render_template("search.html", 
@@ -1219,6 +1547,7 @@ def search():
                           optimization_explanation=optimization_explanation,
                           grand_summary=grand_summary,
                           deep_search_active=deep_search_active,
+                          regular_search_active=regular_search_active,
                           show_previous_search=show_previous_search,
                           restored_from_cache=restored_from_cache,
                           result_limit=result_limit)
@@ -1862,6 +2191,346 @@ def game_note_api(appid):
         traceback.print_exc()
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
+# Regular search status tracking
+regular_search_status = {
+    "active": False,
+    "progress": 0,
+    "current_step": "",
+    "search_type": "regular",  # 'regular' or 'ai_enhanced'
+    "query": "",
+    "completed": False,
+    "error": None,
+    "session_id": None,
+    "optimization_explanation": "",
+    "results": []  # Store completed results here
+}
+
+#############################################
+# Regular Search Status Route for AJAX polling
+#############################################
+@app.route("/search_status")
+def get_search_status():
+    """Returns the current status of a regular or AI enhanced search as JSON for polling."""
+    global regular_search_status
+    
+    status_copy = dict(regular_search_status)  # Make a copy to avoid thread issues
+    
+    # Ensure all necessary fields are present
+    if "progress" not in status_copy:
+        status_copy["progress"] = 0
+    
+    if "current_step" not in status_copy:
+        status_copy["current_step"] = "Initializing..."
+    
+    if "completed" not in status_copy:
+        status_copy["completed"] = False
+    
+    return jsonify(status_copy)
+
+#############################################
+# Regular/AI Enhanced search function to run in background
+#############################################
+def regular_search_background_task(query, search_params, use_ai_enhanced=False):
+    global regular_search_status
+    
+    try:
+        # Store the original query for reference
+        original_query = query.strip()
+        search_type = "ai_enhanced" if use_ai_enhanced else "regular"
+        
+        session_id = regular_search_status["session_id"]
+        
+        print(f"\n==== STARTING {search_type.upper()} SEARCH FOR: '{original_query}' (Session: {session_id}) ====\n")
+        
+        # Step 1: Initialize search
+        regular_search_status["current_step"] = "Initializing search"
+        regular_search_status["progress"] = 10
+        
+        # Add a small delay to ensure the frontend can see the progress update
+        time.sleep(0.2)
+        
+        # Step 2: Apply AI optimization if enabled
+        if use_ai_enhanced:
+            regular_search_status["current_step"] = "Optimizing search query with AI"
+            regular_search_status["progress"] = 20
+            
+            try:
+                actual_search_query, optimization_explanation = optimize_search_query(query)
+                
+                # Check if the search is still valid
+                if regular_search_status["session_id"] != session_id:
+                    print(f"Search session {session_id} was replaced. Terminating.")
+                    return None, None
+                
+                regular_search_status["optimization_explanation"] = optimization_explanation
+                print(f"Original query: '{query}'")
+                print(f"Optimized query: '{actual_search_query}'")
+                print(f"Explanation: {optimization_explanation}")
+                
+                regular_search_status["progress"] = 30
+                regular_search_status["current_step"] = "Performing semantic search with optimized query"
+            except Exception as e:
+                print(f"Error optimizing query: {e}")
+                # Fall back to original query if optimization fails
+                actual_search_query = query
+                regular_search_status["current_step"] = "Falling back to original query due to optimization error"
+                regular_search_status["progress"] = 30
+        else:
+            actual_search_query = query
+            regular_search_status["current_step"] = "Performing semantic search"
+            regular_search_status["progress"] = 30
+        
+        # Short delay for UI update
+        time.sleep(0.2)
+        
+        # Step 3: Perform semantic search
+        initial_top_k = 50
+        limit_for_reranking = 50
+        
+        # Update progress for semantic search
+        regular_search_status["current_step"] = "Searching for games"
+        regular_search_status["progress"] = 40
+        
+        raw_results = semantic_search_query(actual_search_query, top_k=initial_top_k)
+        
+        # Check if the search is still valid
+        if regular_search_status["session_id"] != session_id:
+            print(f"Search session {session_id} was replaced. Terminating.")
+            return None, None
+        
+        if not raw_results:
+            regular_search_status["current_step"] = "No results found for your query"
+            regular_search_status["progress"] = 100
+            regular_search_status["completed"] = True
+            regular_search_status["error"] = "No results found for your search query."
+            regular_search_status["results"] = []  # Store empty results
+            return [], regular_search_status["optimization_explanation"]
+        
+        # Update progress for preparing candidates
+        regular_search_status["current_step"] = "Preparing search results"
+        regular_search_status["progress"] = 50
+        
+        # Step 4: Prepare candidates for potential LLM re-ranking
+        candidates_for_reranking = []
+        original_semantic_order_appids = []
+        
+        # Load summaries for AI data
+        summaries_dict = load_summaries(SUMMARIES_FILE)
+        
+        for r in raw_results:
+            appid = r.get("appid")
+            if not appid: continue
+            appid_int = int(appid)
+            original_semantic_order_appids.append(appid_int)
+            
+            # Prepare candidate only if it's within the limit we send to the LLM
+            if len(candidates_for_reranking) < limit_for_reranking:
+                 # Get the actual game data to access more information if needed
+                 game_data = None
+                 if TESTING_ENABLE_SYNTHETIC_SUMMARIES:
+                     game_data = get_game_data_by_appid(appid_int, STEAM_DATA_FILE, index_map)
+                 
+                 summary_obj = summaries_dict.get(appid_int, {})
+                 ai_summary = summary_obj.get("ai_summary", "")
+                 
+                 if ai_summary:
+                     # We have a real AI summary from the summaries file
+                     candidates_for_reranking.append({"appid": appid_int, "ai_summary": ai_summary})
+                 elif TESTING_ENABLE_SYNTHETIC_SUMMARIES and game_data:
+                     # Create a synthetic summary for testing
+                     name = game_data.get("name", "Unknown Game")
+                     description = game_data.get("short_description", "No description available.")
+                     synthetic_summary = f"SYNTHETIC SUMMARY FOR TESTING:\n{name} is a game on Steam. {description}"
+                     candidates_for_reranking.append({
+                         "appid": appid_int, 
+                         "ai_summary": synthetic_summary
+                     })
+        
+        # Check if the search is still valid
+        if regular_search_status["session_id"] != session_id:
+            print(f"Search session {session_id} was replaced. Terminating.")
+            return None, None
+        
+        # Step 5: Perform LLM re-ranking if needed
+        processing_order_appids = original_semantic_order_appids  # Default: semantic order
+        
+        if search_params["sort_by"] == "Relevance" and candidates_for_reranking:
+            regular_search_status["current_step"] = "Re-ranking results with AI for better relevance"
+            regular_search_status["progress"] = 60
+            
+            try:
+                ordered_appids_from_llm, llm_comment = rerank_search_results(actual_search_query, candidates_for_reranking)
+                
+                # Check if the search is still valid
+                if regular_search_status["session_id"] != session_id:
+                    print(f"Search session {session_id} was replaced. Terminating.")
+                    return None, None
+                
+                if ordered_appids_from_llm is not None:
+                    regular_search_status["current_step"] = "AI re-ranking successful"
+                    
+                    # Create the new order: Start with LLM's order, then append remaining semantic results
+                    llm_ordered_set = set(ordered_appids_from_llm)
+                    remaining_semantic_appids = [appid for appid in original_semantic_order_appids if appid not in llm_ordered_set]
+                    processing_order_appids = ordered_appids_from_llm + remaining_semantic_appids
+                else:
+                     regular_search_status["current_step"] = "AI re-ranking failed, using default ordering"
+            except Exception as e:
+                print(f"Exception during LLM re-ranking call: {e}")
+                regular_search_status["current_step"] = "Error in AI re-ranking, using default ordering"
+        
+        # Step 6: Prepare final results with filtering
+        regular_search_status["current_step"] = "Applying filters and finalizing results"
+        regular_search_status["progress"] = 80
+        
+        results_dict = {}  # Use dict to store results before final sorting
+        
+        for appid in processing_order_appids:
+            # Get full game data
+            game_data = get_game_data_by_appid(appid, STEAM_DATA_FILE, index_map)
+            if not game_data:
+                continue
+            
+            # Extract data needed for filtering and display
+            reviews = game_data.get("reviews", [])
+            total_reviews = len(reviews)
+            positive_count = sum(1 for review in reviews if review.get("voted_up"))
+            pos_percent = (positive_count / total_reviews * 100) if total_reviews > 0 else 0
+            
+            # Extract media
+            media = []
+            if game_data.get("header_image"): media.append(force_https(game_data["header_image"]))
+            if isinstance(game_data.get("screenshots"), list):
+                for s in game_data["screenshots"]:
+                    if isinstance(s, dict) and s.get("path_full"):
+                        media.append(force_https(s["path_full"]))
+                    else:
+                        media.append(force_https(str(s)))
+            
+            store_data = game_data.get("store_data", {})
+            if isinstance(store_data, dict):
+                movies = store_data.get("movies", [])
+                for movie in movies:
+                    webm_max = movie.get("webm", {}).get("max")
+                    mp4_max = movie.get("mp4", {}).get("max")
+                    if webm_max:
+                        media.append(force_https(webm_max))
+                    elif mp4_max:
+                        media.append(force_https(mp4_max))
+                    else:
+                        thumb = movie.get("thumbnail")
+                        if thumb:
+                            media.append(force_https(thumb))
+            
+            # Extract AI summary
+            summary_obj = summaries_dict.get(appid, {})
+            ai_summary = summary_obj.get("ai_summary", "")
+            
+            # Extract genres
+            genres = []
+            if "store_data" in game_data and isinstance(game_data["store_data"], dict):
+                 genre_list = game_data["store_data"].get("genres", [])
+                 genres = [g.get("description") for g in genre_list if g.get("description")]
+            
+            # Extract year
+            release_date_str = game_data.get("release_date", "")
+            year = "Unknown"
+            if release_date_str:
+                 try: year = release_date_str.split(",")[-1].strip()
+                 except: pass
+            
+            # Extract platforms
+            platforms = game_data.get("store_data", {}).get("platforms", {})
+            
+            # Extract price
+            is_free = game_data.get("store_data", {}).get("is_free", False)
+            price = 0.0
+            if not is_free:
+                 price_overview = game_data.get("store_data", {}).get("price_overview", {})
+                 if price_overview: price = price_overview.get("final", 0) / 100.0
+            
+            # Apply Filters
+            if search_params["genre"] != "All" and search_params["genre"] not in genres: continue
+            if search_params["year"] != "All" and year != search_params["year"]: continue
+            if search_params["platform"] != "All":
+                platform_key = search_params["platform"].lower()
+                if not platforms.get(platform_key, False): continue
+            if search_params["price"] == "Free" and not is_free: continue
+            if search_params["price"] == "Paid" and is_free: continue
+            
+            # If filters pass, store the result
+            results_dict[appid] = {
+                "appid": appid,
+                "name": game_data.get("name", "Unknown"),
+                "media": media,
+                "genres": genres,
+                "release_year": year,
+                "platforms": platforms,
+                "is_free": is_free,
+                "price": price,
+                "pos_percent": pos_percent,
+                "total_reviews": total_reviews,
+                "ai_summary": ai_summary
+            }
+        
+        # Check if the search is still valid
+        if regular_search_status["session_id"] != session_id:
+            print(f"Search session {session_id} was replaced. Terminating.")
+            return None, None
+        
+        # Create the final list, respecting the processing order
+        final_results = [results_dict[appid] for appid in processing_order_appids if appid in results_dict]
+        
+        # Apply final explicit sorting ONLY if the user chose something other than "Relevance"
+        if search_params["sort_by"] != "Relevance":
+            regular_search_status["current_step"] = f"Sorting results by {search_params['sort_by']}"
+            
+            if search_params["sort_by"] == "Name (A-Z)":
+                final_results.sort(key=lambda x: x["name"])
+            elif search_params["sort_by"] == "Release Date (Newest)":
+                final_results.sort(key=lambda x: int(x["release_year"]) if x["release_year"].isdigit() else 0, reverse=True)
+            elif search_params["sort_by"] == "Release Date (Oldest)":
+                final_results.sort(key=lambda x: int(x["release_year"]) if x["release_year"].isdigit() else float('inf'))
+            elif search_params["sort_by"] == "Price (Low to High)":
+                final_results.sort(key=lambda x: x["price"])
+            elif search_params["sort_by"] == "Price (High to Low)":
+                final_results.sort(key=lambda x: x["price"], reverse=True)
+            elif search_params["sort_by"] == "Review Count (High to Low)":
+                final_results.sort(key=lambda x: x["total_reviews"], reverse=True)
+            elif search_params["sort_by"] == "Positive Review % (High to Low)":
+                final_results.sort(key=lambda x: x["pos_percent"], reverse=True)
+        
+        # Limit the final results based on the user's selection
+        if search_params["result_limit"] and search_params["result_limit"] < len(final_results):
+            final_results = final_results[:search_params["result_limit"]]
+        
+        # Mark the search as completed
+        regular_search_status["progress"] = 100
+        regular_search_status["current_step"] = "Search completed successfully"
+        regular_search_status["completed"] = True
+        regular_search_status["results"] = final_results  # Store the results for later retrieval
+        
+        print(f"==== {search_type.upper()} SEARCH COMPLETED FOR: '{original_query}' (Session: {session_id}) ====")
+        print(f"Found {len(final_results)} results")
+        
+        return final_results, regular_search_status["optimization_explanation"]
+        
+    except Exception as e:
+        print(f"Unexpected error in search background task: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        
+        # Update status to show the error
+        regular_search_status.update({
+            "error": f"An unexpected error occurred: {str(e)}",
+            "progress": 100,
+            "current_step": "Error occurred",
+            "completed": True
+        })
+        
+        return [], ""
+
 if __name__ == "__main__":
     # Make sure debug is True for development logging
     app.run(debug=True, threaded=True)
+

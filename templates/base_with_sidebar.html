@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Steam Seek{% endblock %}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
@@ -31,6 +32,9 @@
       min-height: calc(100vh - 56px);
       position: sticky;
       top: 56px;
+      width: 100%;
+      max-width: 100%;
+      z-index: 1028;
     }
     
     .sidebar .nav-link {
@@ -65,42 +69,75 @@
     .submenu {
       padding-left: 1.5rem;
     }
+    
+    /* Mobile sidebar toggle */
+    .sidebar-toggle {
+      position: fixed;
+      left: 1rem;
+      top: 1rem;
+      z-index: 1031;
+      display: none;
+    }
+    
+    @media (max-width: 767.98px) {
+      .sidebar {
+        position: fixed;
+        top: 56px;
+        left: 0;
+        width: 260px;
+        max-width: 80%;
+        height: calc(100vh - 56px);
+        overflow-y: auto;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease-in-out;
+        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+      }
+      .sidebar.show {
+        transform: translateX(0);
+      }
+      .content-with-sidebar {
+        margin-left: 0 !important;
+        width: 100% !important;
+      }
+      /* Hide navbar links on mobile as they're in the sidebar */
+      .navbar-collapse {
+        display: none !important;
+      }
+      /* Add spacing around the main container to avoid edge-to-edge content */
+      .container-fluid {
+        padding-right: 1rem;
+        padding-left: 1rem;
+      }
+    }
   </style>
 </head>
 <body>
+  <!-- Revised Navbar with integrated hamburger button -->
   <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-    <div class="container-fluid">
-      <a class="navbar-brand" href="{{ url_for('search') }}">Steam Seek</a>
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-        <span class="navbar-toggler-icon"></span>
+    <div class="container-fluid px-2">
+      <!-- Add hamburger menu inside navbar for mobile -->
+      <button class="navbar-toggler border-0 me-2 d-lg-none" type="button" id="sidebarToggleBtn" aria-label="Toggle sidebar menu">
+        <i class="bi bi-list"></i>
       </button>
-      <div class="collapse navbar-collapse" id="navbarNav">
-        <ul class="navbar-nav me-auto">
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint == 'search' %}active{% endif %}" href="{{ url_for('search') }}">Search</a>
-          </li>
-          {% if current_user.is_authenticated %}
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint == 'user_lists' %}active{% endif %}" href="{{ url_for('user_lists') }}">My Lists</a>
-          </li>
-          {% endif %}
-        </ul>
-        <ul class="navbar-nav ms-auto">
-          {% if current_user.is_authenticated %}
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
-          </li>
-          {% else %}
-          <li class="nav-item">
-            <a class="nav-link" href="{{ url_for('login') }}">Login</a>
-          </li>
-          {% endif %}
-        </ul>
-      </div>
+      
+      <a class="navbar-brand" href="{{ url_for('search') }}">Steam Seek</a>
+      
+      <!-- Simple top nav with only logout on mobile -->
+      <ul class="navbar-nav ms-auto d-flex flex-row">
+        {% if current_user.is_authenticated %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+        </li>
+        {% else %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('login') }}">Login</a>
+        </li>
+        {% endif %}
+      </ul>
     </div>
   </nav>
   
-  <!-- Loader Overlay -->
+  <!-- Loader Overlay - ONLY USED FOR DETAIL PAGE NOW -->
   <div id="loader-overlay" style="display:none;">
     <div class="spinner-border text-primary" role="status">
       <span class="visually-hidden">Loading...</span>
@@ -108,132 +145,137 @@
     <div id="loader-message" style="margin-top: 10px;">Loading...</div>
   </div>
   
-  <div class="container-fluid mt-3">
-    <div class="row">
-      <!-- Sidebar -->
-      <div class="col-md-3 col-lg-2">
-        <div class="sidebar bg-light p-2">
-          <div class="nav flex-column">
-            <a class="nav-link {% if request.endpoint == 'search' %}active{% endif %}" href="{{ url_for('search') }}">
-              <i class="bi bi-search"></i> Search
-            </a>
-            
-            <!-- Back to Search Results button (shown only when there's a saved search) -->
-            <a class="nav-link d-none" id="backToSearchBtn" href="#">
-              <i class="bi bi-arrow-return-left"></i> Back to Search Results
-            </a>
-            
-            <script>
-              // Check if there's a saved search and show the button if there is
-              document.addEventListener('DOMContentLoaded', function() {
-                try {
-                  console.log("Checking for saved search to enable Back button...");
-                  const savedSearch = localStorage.getItem('steamseek_last_search');
+  <!-- Main Content Container Structure -->
+  <div class="container-fluid py-3">
+    <div class="row g-3">
+      <!-- Sidebar with fixed width for desktop -->
+      <div class="col-lg-2 col-md-3 sidebar bg-light p-2" id="sidebar">
+        <div class="nav flex-column">
+          <a class="nav-link {% if request.endpoint == 'search' %}active{% endif %}" href="{{ url_for('search') }}">
+            <i class="bi bi-search"></i> Search
+          </a>
+          
+          <!-- Only show these nav items in the sidebar -->
+          <a class="nav-link {% if request.endpoint == 'user_lists' %}active{% endif %}" href="{{ url_for('user_lists') }}">
+            <i class="bi bi-list-nested"></i> My Lists
+          </a>
+          
+          <!-- Back to Search Results button (shown only when there's a saved search) -->
+          <a class="nav-link d-none" id="backToSearchBtn" href="#">
+            <i class="bi bi-arrow-return-left"></i> Back to Search Results
+          </a>
+          
+          <script>
+            // Check if there's a saved search and show the button if there is
+            document.addEventListener('DOMContentLoaded', function() {
+              try {
+                console.log("Checking for saved search to enable Back button...");
+                const savedSearch = localStorage.getItem('steamseek_last_search');
+                
+                if (savedSearch) {
+                  console.log("Found saved search data in localStorage");
                   
-                  if (savedSearch) {
-                    console.log("Found saved search data in localStorage");
+                  try {
+                    // Verify we can parse the data
+                    const searchData = JSON.parse(savedSearch);
+                    const query = searchData.query;
+                    const resultsCount = searchData.cached_results ? searchData.cached_results.length : 0;
+                    const filters = searchData.filters || {};
                     
-                    try {
-                      // Verify we can parse the data
-                      const searchData = JSON.parse(savedSearch);
-                      const query = searchData.query;
-                      const resultsCount = searchData.cached_results ? searchData.cached_results.length : 0;
-                      const filters = searchData.filters || {};
+                    console.log(`Saved search: "${query}" with ${resultsCount} results`);
+                    
+                    // Create a URL with all search parameters instead of using restore=true
+                    const backBtn = document.getElementById('backToSearchBtn');
+                    if (backBtn) {
+                      const searchUrl = new URL('/', window.location.origin);
                       
-                      console.log(`Saved search: "${query}" with ${resultsCount} results`);
+                      // Add all search parameters
+                      if (query) searchUrl.searchParams.set('q', query);
+                      if (filters.genre) searchUrl.searchParams.set('genre', filters.genre);
+                      if (filters.release_year) searchUrl.searchParams.set('release_year', filters.release_year);
+                      if (filters.platform) searchUrl.searchParams.set('platform', filters.platform);
+                      if (filters.price) searchUrl.searchParams.set('price', filters.price);
+                      if (filters.sort_by) searchUrl.searchParams.set('sort_by', filters.sort_by);
+                      if (filters.result_limit) searchUrl.searchParams.set('result_limit', filters.result_limit);
                       
-                      // Create a URL with all search parameters instead of using restore=true
-                      const backBtn = document.getElementById('backToSearchBtn');
-                      if (backBtn) {
-                        const searchUrl = new URL('/', window.location.origin);
-                        
-                        // Add all search parameters
-                        if (query) searchUrl.searchParams.set('q', query);
-                        if (filters.genre) searchUrl.searchParams.set('genre', filters.genre);
-                        if (filters.release_year) searchUrl.searchParams.set('release_year', filters.release_year);
-                        if (filters.platform) searchUrl.searchParams.set('platform', filters.platform);
-                        if (filters.price) searchUrl.searchParams.set('price', filters.price);
-                        if (filters.sort_by) searchUrl.searchParams.set('sort_by', filters.sort_by);
-                        
-                        searchUrl.searchParams.set('use_ai_enhanced', filters.use_ai_enhanced ? 'true' : 'false');
-                        searchUrl.searchParams.set('use_deep_search', filters.use_deep_search ? 'true' : 'false');
-                        searchUrl.searchParams.set('run_search', 'true');
-                        
-                        // Set the href of the button
-                        backBtn.href = searchUrl.pathname + searchUrl.search;
-                        backBtn.classList.remove('d-none');
-                        console.log("Back to Search Results button enabled with direct search URL:", backBtn.href);
-                      } else {
-                        console.warn("Back button element not found in DOM");
-                      }
-                    } catch (parseError) {
-                      console.error("Error parsing saved search data:", parseError);
+                      searchUrl.searchParams.set('use_ai_enhanced', filters.use_ai_enhanced ? 'true' : 'false');
+                      searchUrl.searchParams.set('use_deep_search', filters.use_deep_search ? 'true' : 'false');
+                      searchUrl.searchParams.set('run_search', 'true');
+                      
+                      // Set the href of the button
+                      backBtn.href = searchUrl.pathname + searchUrl.search;
+                      backBtn.classList.remove('d-none');
+                      console.log("Back to Search Results button enabled with direct search URL:", backBtn.href);
+                    } else {
+                      console.warn("Back button element not found in DOM");
                     }
-                  } else {
-                    console.log("No saved search found in localStorage");
+                  } catch (parseError) {
+                    console.error("Error parsing saved search data:", parseError);
                   }
-                } catch (error) {
-                  console.error("Error accessing localStorage:", error);
+                } else {
+                  console.log("No saved search found in localStorage");
                 }
-              });
-            </script>
+              } catch (error) {
+                console.error("Error accessing localStorage:", error);
+              }
+            });
+          </script>
+          
+          {% if current_user.is_authenticated %}
+            <div class="sidebar-heading">Saved Lists</div>
+            <a class="nav-link {% if request.endpoint == 'user_lists' %}active{% endif %}" href="{{ url_for('user_lists') }}">
+              <i class="bi bi-card-list"></i> View All Lists
+            </a>
             
-            {% if current_user.is_authenticated %}
-              <div class="sidebar-heading">Saved Lists</div>
-              <a class="nav-link {% if request.endpoint == 'user_lists' %}active{% endif %}" href="{{ url_for('user_lists') }}">
-                <i class="bi bi-card-list"></i> View All Lists
-              </a>
-              
-              <!-- User's Lists (max 5 shown in sidebar) -->
-              <div class="submenu">
-                {% set user_lists = current_user.get_lists() %}
-                {% for list in user_lists[:5] %}
-                  <a class="nav-link {% if request.endpoint == 'view_list' and request.view_args.list_id == list.id %}active{% endif %}" 
-                     href="{{ url_for('view_list', list_id=list.id) }}">
-                    <i class="bi bi-collection"></i> {{ list.name }}
-                  </a>
-                {% endfor %}
-                {% if user_lists|length > 5 %}
-                  <a class="nav-link" href="{{ url_for('user_lists') }}">
-                    <i class="bi bi-three-dots"></i> View {{ user_lists|length - 5 }} more...
-                  </a>
-                {% endif %}
-              </div>
-              
-              <div class="sidebar-heading">Settings</div>
-              <a class="nav-link" href="#">
-                <i class="bi bi-gear"></i> Settings
-              </a>
-              
-              <div class="sidebar-heading">User</div>
-              <div class="p-3 mb-3 bg-white rounded">
-                <div class="d-flex align-items-center mb-2">
-                  {% if current_user.photo_url %}
-                    <img src="{{ current_user.photo_url }}" alt="{{ current_user.display_name or current_user.email }}" class="rounded-circle me-2" width="32" height="32">
-                  {% else %}
-                    <i class="bi bi-person-circle me-2" style="font-size: 1.5rem;"></i>
-                  {% endif %}
-                  <div>
-                    <div class="fw-bold">{{ current_user.display_name or 'User' }}</div>
-                    <div class="text-muted small">{{ current_user.email }}</div>
-                  </div>
-                </div>
-                <a href="{{ url_for('logout') }}" class="btn btn-sm btn-outline-secondary d-block w-100">
-                  <i class="bi bi-box-arrow-right"></i> Logout
+            <!-- User's Lists (max 5 shown in sidebar) -->
+            <div class="submenu">
+              {% set user_lists = current_user.get_lists() %}
+              {% for list in user_lists[:5] %}
+                <a class="nav-link {% if request.endpoint == 'view_list' and request.view_args.list_id == list.id %}active{% endif %}" 
+                   href="{{ url_for('view_list', list_id=list.id) }}">
+                  <i class="bi bi-collection"></i> {{ list.name }}
                 </a>
+              {% endfor %}
+              {% if user_lists|length > 5 %}
+                <a class="nav-link" href="{{ url_for('user_lists') }}">
+                  <i class="bi bi-three-dots"></i> View {{ user_lists|length - 5 }} more...
+                </a>
+              {% endif %}
+            </div>
+            
+            <div class="sidebar-heading">Settings</div>
+            <a class="nav-link" href="#">
+              <i class="bi bi-gear"></i> Settings
+            </a>
+            
+            <div class="sidebar-heading">User</div>
+            <div class="p-3 mb-3 bg-white rounded">
+              <div class="d-flex align-items-center mb-2">
+                {% if current_user.photo_url %}
+                  <img src="{{ current_user.photo_url }}" alt="{{ current_user.display_name or current_user.email }}" class="rounded-circle me-2" width="32" height="32">
+                {% else %}
+                  <i class="bi bi-person-circle me-2" style="font-size: 1.5rem;"></i>
+                {% endif %}
+                <div>
+                  <div class="fw-bold">{{ current_user.display_name or 'User' }}</div>
+                  <div class="text-muted small">{{ current_user.email }}</div>
+                </div>
               </div>
-            {% else %}
-              <div class="sidebar-heading">User</div>
-              <a class="nav-link" href="{{ url_for('login') }}">
-                <i class="bi bi-box-arrow-in-right"></i> Login
+              <a href="{{ url_for('logout') }}" class="btn btn-sm btn-outline-secondary d-block w-100">
+                <i class="bi bi-box-arrow-right"></i> Logout
               </a>
-            {% endif %}
-          </div>
+            </div>
+          {% else %}
+            <div class="sidebar-heading">User</div>
+            <a class="nav-link" href="{{ url_for('login') }}">
+              <i class="bi bi-box-arrow-in-right"></i> Login
+            </a>
+          {% endif %}
         </div>
       </div>
       
       <!-- Main Content -->
-      <div class="col-md-9 col-lg-10">
+      <div class="col-lg-10 col-md-9 content-with-sidebar">
         {% block main_content %}{% endblock %}
       </div>
     </div>
@@ -256,16 +298,9 @@
       var loaderOverlay = document.getElementById('loader-overlay');
       var loaderMessage = document.getElementById('loader-message');
       
-      // For all forms, show the overlay on submit
-      document.querySelectorAll('form').forEach(function(form) {
-        form.addEventListener('submit', function() {
-          if(loaderOverlay) {
-            loaderMessage.innerHTML = 'Loading...';
-            loaderOverlay.style.display = 'flex';
-          }
-        });
-      });
-
+      // For forms, DON'T show the overlay on submit by default - we only want it for the analyze page now
+      // Each page should handle its own loading indicators now
+      
       // For links that require a loader (e.g. Analyze button), add the class "show-loader"
       document.querySelectorAll('a.show-loader').forEach(function(link) {
         link.addEventListener('click', function() {
@@ -275,6 +310,36 @@
           }
         });
       });
+      
+      // Mobile sidebar toggle
+      const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+      const sidebar = document.getElementById('sidebar');
+      
+      if (sidebarToggleBtn && sidebar) {
+        sidebarToggleBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          sidebar.classList.toggle('show');
+          console.log('Sidebar toggle clicked, now', sidebar.classList.contains('show') ? 'visible' : 'hidden');
+        });
+        
+        // Close sidebar when clicking outside of it on mobile
+        document.addEventListener('click', function(event) {
+          if (window.innerWidth < 768 && 
+              !sidebar.contains(event.target) && 
+              !sidebarToggleBtn.contains(event.target) &&
+              sidebar.classList.contains('show')) {
+            sidebar.classList.remove('show');
+            console.log('Sidebar closed by clicking outside');
+          }
+        });
+        
+        // Handle document resize
+        window.addEventListener('resize', function() {
+          if (window.innerWidth >= 768) {
+            sidebar.classList.remove('show');
+          }
+        });
+      }
     });
   </script>
   {% block scripts %}{% endblock %}

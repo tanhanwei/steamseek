@@ -1,4 +1,4 @@
-{% extends "base_with_sidebar.html" %}
+﻿{% extends "base_with_sidebar.html" %}
 {% block title %}Search Games{% endblock %}
 
 {% block main_content %}
@@ -1311,20 +1311,20 @@
       document.addEventListener('DOMContentLoaded', function() {
         try {
           localStorage.setItem('steamseek_pending_deep_search', JSON.stringify({
-            query: '{{ query }}',
+            query: "{{ query }}",
             timestamp: Date.now(),
             filters: {
-              genre: '{{ selected_genre }}',
-              release_year: '{{ selected_year }}',
-              platform: '{{ selected_platform }}',
-              price: '{{ selected_price }}',
-              sort_by: '{{ sort_by }}',
-              result_limit: '{{ result_limit }}'
+              genre: "{{ selected_genre }}",
+              release_year: "{{ selected_year }}",
+              platform: "{{ selected_platform }}",
+              price: "{{ selected_price }}",
+              sort_by: "{{ sort_by }}",
+              result_limit: "{{ result_limit }}"
             }
           }));
-          console.log('Saved pending deep search info to localStorage');
+          console.log("Saved pending deep search info to localStorage");
         } catch (error) {
-          console.error('Error saving deep search info:', error);
+          console.error("Error saving deep search info:", error);
         }
       });
     </script>
@@ -1882,20 +1882,20 @@
     document.addEventListener('DOMContentLoaded', function() {
       try {
         localStorage.setItem('steamseek_pending_deep_search', JSON.stringify({
-          query: '{{ query }}',
+          query: "{{ query }}",
           timestamp: Date.now(),
           filters: {
-            genre: '{{ selected_genre }}',
-            release_year: '{{ selected_year }}',
-            platform: '{{ selected_platform }}',
-            price: '{{ selected_price }}',
-            sort_by: '{{ sort_by }}',
-            result_limit: '{{ result_limit }}'
+            genre: "{{ selected_genre }}",
+            release_year: "{{ selected_year }}",
+            platform: "{{ selected_platform }}",
+            price: "{{ selected_price }}",
+            sort_by: "{{ sort_by }}",
+            result_limit: "{{ result_limit }}"
           }
         }));
-        console.log('Saved pending deep search info to localStorage');
+        console.log("Saved pending deep search info to localStorage");
       } catch (error) {
-        console.error('Error saving deep search info:', error);
+        console.error("Error saving deep search info:", error);
       }
     });
   </script>

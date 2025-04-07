@@ -2,14 +2,14 @@
 {% block title %}{{ list.name }} - Steam Seek{% endblock %}
 
 {% block main_content %}
-<div class="container">
+<div class="container-fluid p-0">
   <!-- List Title - View/Edit Toggle -->
   <div class="mb-4">
-    <div class="d-flex justify-content-between align-items-center">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
       <div class="flex-grow-1">
         <!-- View Mode -->
         <div id="listTitleView" class="d-flex align-items-center">
-          <h1 class="me-2">{{ list.name }}</h1>
+          <h1 class="me-2 mb-0">{{ list.name }}</h1>
           <button type="button" class="btn btn-sm btn-outline-secondary edit-toggle" data-target="listTitle">
             <i class="bi bi-pencil"></i>
           </button>
@@ -23,7 +23,9 @@
           </div>
         </div>
       </div>
-      <a href="{{ url_for('user_lists') }}" class="btn btn-secondary">Back to Lists</a>
+      <a href="{{ url_for('user_lists') }}" class="btn btn-secondary">
+        <i class="bi bi-arrow-left"></i> <span class="d-none d-sm-inline">Back to Lists</span>
+      </a>
     </div>
   </div>
   
@@ -105,21 +107,17 @@
     <div class="card mb-4">
       <div class="card-body">
         <form id="sortFilterForm" method="get" action="{{ url_for('view_list', list_id=list.id) }}">
-          <div class="row align-items-center">
-            <div class="col-md-6">
-              <div class="row g-2">
-                <div class="col-auto">
-                  <label for="sort-select" class="col-form-label">Sort by</label>
-                </div>
-                <div class="col-auto">
-                  <select id="sort-select" name="sort_by" class="form-select form-select-sm" onchange="this.form.submit()">
+          <div class="row align-items-center g-2">
+            <div class="col-12 col-md-6">
+              <div class="d-flex flex-wrap gap-2 align-items-center">
+                <label for="sort-select" class="mb-0 me-1">Sort by</label>
+                <div class="d-flex flex-grow-1 flex-sm-grow-0">
+                  <select id="sort-select" name="sort_by" class="form-select form-select-sm me-1" onchange="this.form.submit()">
                     <option value="name" {% if sort_by == 'name' %}selected{% endif %}>Name</option>
                     <option value="date_added" {% if sort_by == 'date_added' %}selected{% endif %}>Date Added</option>
                     <option value="price" {% if sort_by == 'price' %}selected{% endif %}>Price</option>
                     <option value="release_year" {% if sort_by == 'release_year' %}selected{% endif %}>Release Year</option>
                   </select>
-                </div>
-                <div class="col-auto">
                   <select id="order-select" name="order" class="form-select form-select-sm" onchange="this.form.submit()">
                     <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
                     <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
@@ -127,7 +125,7 @@
                 </div>
               </div>
             </div>
-            <div class="col-md-6">
+            <div class="col-12 col-md-6 mt-2 mt-md-0">
               <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox" id="released-toggle" name="released_only" value="true" {% if show_released_only %}checked{% endif %} onchange="this.form.submit()">
                 <label class="form-check-label" for="released-toggle">Show released games only</label>
@@ -138,12 +136,12 @@
       </div>
     </div>
     
-    <div class="row">
+    <div class="row row-cols-1 row-cols-md-2 g-3">
       {% for game in games %}
-        <div class="col-md-6 mb-3">
-          <div class="card">
+        <div class="col">
+          <div class="card h-100 shadow-sm">
             <!-- Bootstrap Carousel for each result -->
-            <div id="carousel-{{ game.appid }}" class="carousel slide">
+            <div id="carousel-{{ game.appid }}" class="carousel slide card-img-top" style="max-height: 220px; overflow: hidden;">
               <div class="carousel-inner">
                 {% if game.media and game.media|length > 0 %}
                   {% for item in game.media %}
@@ -184,38 +182,76 @@
                 </button>
               {% endif %}
             </div>
-            <div class="card-body">
-              <h5 class="card-title d-flex justify-content-between align-items-center">
-                <a href="https://store.steampowered.com/app/{{ game.appid }}/" target="_blank" style="text-decoration: none; color: inherit;">
-                  {{ game.name }}
-                </a>
+            <div class="card-body d-flex flex-column">
+              <div class="d-flex justify-content-between align-items-start mb-2">
+                <h5 class="card-title mb-0 text-truncate">
+                  <a href="https://store.steampowered.com/app/{{ game.appid }}/" target="_blank" class="text-decoration-none text-reset">
+                    {{ game.name }}
+                  </a>
+                </h5>
                 <!-- Remove from List Button -->
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="if(confirm('Remove this game from the list?')) document.getElementById('removeForm-{{ game.appid }}').submit();">
-                  <i class="bi bi-trash"></i> Remove
+                <button type="button" class="btn btn-sm btn-outline-danger ms-2 flex-shrink-0" onclick="if(confirm('Remove this game from the list?')) document.getElementById('removeForm-{{ game.appid }}').submit();">
+                  <i class="bi bi-trash"></i>
                 </button>
                 <form id="removeForm-{{ game.appid }}" method="post" action="{{ url_for('remove_game_from_list', list_id=list.id, appid=game.appid) }}" style="display: none;"></form>
-              </h5>
-              <p class="card-text">
+              </div>
+              
+              <div class="game-details small text-muted mb-2">
                 {% if game.genres %}
-                  <small>Genres: {{ game.genres|join(', ') }}</small><br>
+                  <div><strong>Genres:</strong> {{ game.genres|join(', ') }}</div>
                 {% endif %}
-                <small>Release Year: <span class="{% if not game.is_released %}text-warning{% endif %}">{{ game.release_year }}</span></small><br>
-                <small>Price: {% if game.is_free %}Free{% else %}${{ game.price }}{% endif %}</small><br>
-                {% if game.pos_percent is defined %}
-                  <small>Positive: {{ game.pos_percent|round(0) }}%</small><br>
-                {% endif %}
-                {% if game.total_reviews is defined %}
-                  <small>Reviews: {{ game.total_reviews }}</small>
-                {% endif %}
-              </p>
-              {% if game.ai_summary %}
-                <p>
-                  <a class="btn btn-secondary" data-bs-toggle="collapse" href="#summary-{{ game.appid }}" role="button" aria-expanded="false" aria-controls="summary-{{ game.appid }}">
-                    Show AI Summary
-                  </a>
-                </p>
-                <div class="collapse" id="summary-{{ game.appid }}">
-                  <div class="card card-body">
+                <div class="d-flex justify-content-between">
+                  <span><strong>Year:</strong> <span class="{% if not game.is_released %}text-warning{% endif %}">{{ game.release_year }}</span></span>
+                  <span><strong>Price:</strong> {% if game.is_free %}Free{% else %}${{ game.price }}{% endif %}</span>
+                </div>
+                <div class="d-flex justify-content-between">
+                  {% if game.pos_percent is defined %}
+                    <span><strong>Rating:</strong> {{ game.pos_percent|round(0) }}%</span>
+                  {% endif %}
+                  {% if game.total_reviews is defined %}
+                    <span><strong>Reviews:</strong> {{ game.total_reviews }}</span>
+                  {% endif %}
+                </div>
+              </div>
+              
+              <!-- Action buttons at bottom of card -->
+              <div class="mt-auto">
+                <div class="d-flex flex-column gap-2">
+                  <!-- Action buttons row -->
+                  <div class="d-flex gap-1">
+                    <a href="{{ url_for('detail', appid=game.appid) }}" class="btn btn-sm btn-primary flex-grow-1 show-loader">
+                      <i class="bi bi-bar-chart-fill"></i><span class="d-none d-sm-inline ms-1">Analyze</span>
+                    </a>
+                    <a href="https://www.youtube.com/results?search_query={{ game.name|replace(' ', '+') }}+gameplay" 
+                       class="btn btn-sm btn-danger flex-grow-1" target="_blank">
+                      <i class="bi bi-youtube"></i><span class="d-none d-sm-inline ms-1">YouTube</span>
+                    </a>
+                    <button type="button" class="btn btn-sm btn-info flex-grow-1 game-note-btn" 
+                            data-appid="{{ game.appid }}" data-game-name="{{ game.name }}">
+                      <i class="bi bi-journal-text"></i><span class="d-none d-sm-inline ms-1">Notes</span>
+                    </button>
+                  </div>
+                  
+                  <!-- Additional content toggles -->
+                  <div class="d-flex flex-wrap gap-1">
+                    {% if game.ai_summary %}
+                    <button class="btn btn-sm btn-outline-secondary flex-grow-1" type="button" 
+                            data-bs-toggle="collapse" data-bs-target="#summary-{{ game.appid }}">
+                      <i class="bi bi-robot"></i><span class="d-none d-md-inline ms-1">AI Summary</span>
+                    </button>
+                    {% endif %}
+                    <a class="btn btn-sm btn-outline-secondary flex-grow-1 collapse-note-btn d-none" 
+                       data-bs-toggle="collapse" 
+                       href="#gameNote-{{ game.appid }}">
+                      <i class="bi bi-journal-text"></i><span class="d-none d-md-inline ms-1">Your Notes</span>
+                    </a>
+                  </div>
+                </div>
+                
+                <!-- Collapsible content sections -->
+                {% if game.ai_summary %}
+                <div class="collapse mt-2" id="summary-{{ game.appid }}">
+                  <div class="card card-body small">
                     {{ game.ai_summary|markdown }}
                     
                     {% if not game.ai_summary|markdown or game.ai_summary|markdown == game.ai_summary %}
@@ -225,27 +261,10 @@
                     {% endif %}
                   </div>
                 </div>
-              {% endif %}
-              <div class="d-flex gap-2 mt-2">
-                <a href="{{ url_for('detail', appid=game.appid) }}" class="btn btn-primary show-loader">Analyze</a>
-                <a href="https://www.youtube.com/results?search_query={{ game.name|replace(' ', '+') }}+gameplay" target="_blank" class="btn btn-danger">YouTube</a>
-                <button type="button" class="btn btn-info game-note-btn" data-appid="{{ game.appid }}" data-game-name="{{ game.name }}">
-                  <i class="bi bi-journal-text"></i> Notes
-                </button>
-              </div>
-
-              <!-- Game note collapse section -->
-              <div class="mt-2">
-                <a class="btn btn-outline-secondary btn-sm collapse-note-btn d-none" 
-                   data-bs-toggle="collapse" 
-                   href="#gameNote-{{ game.appid }}" 
-                   role="button" 
-                   aria-expanded="false" 
-                   aria-controls="gameNote-{{ game.appid }}">
-                  <i class="bi bi-journal-text"></i> Your Notes
-                </a>
-                <div class="collapse" id="gameNote-{{ game.appid }}">
-                  <div class="card card-body mt-2 game-note-content">
+                {% endif %}
+                
+                <div class="collapse mt-2" id="gameNote-{{ game.appid }}">
+                  <div class="card card-body small game-note-content">
                     <!-- Note content will be loaded here -->
                     <div class="text-center">
                       <div class="spinner-border spinner-border-sm" role="status">
