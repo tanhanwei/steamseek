@@ -1,4 +1,4 @@
-﻿from flask import Flask, render_template, request, redirect, url_for, session, jsonify, Response, flash
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, Response, flash
 from markupsafe import Markup
 import os
 import json
@@ -2541,4 +2541,3 @@ def regular_search_background_task(query, search_params, use_ai_enhanced=False):
 if __name__ == "__main__":
     # Make sure debug is True for development logging
     app.run(debug=True, threaded=True)
-

@@ -1,0 +1,60 @@
+---
+description: 
+globs: tests/**/*.py, **/test_*.py
+alwaysApply: false
+---
+# Test Implementation Tracker
+
+Type: Auto Attached
+File Patterns: tests/**/*.py, **/test_*.py
+
+## Purpose
+
+This rule ensures that whenever tests are created or modified, the [TESTING_ROADMAP.md](mdc:docs/TESTING_ROADMAP.md) file is updated to reflect the current testing status accurately.
+
+## Instructions for AI
+
+When implementing or modifying tests, you MUST update the [TESTING_ROADMAP.md](mdc:docs/TESTING_ROADMAP.md) file to maintain an accurate record of test coverage. Follow these specific instructions:
+
+### Updates Required in [TESTING_ROADMAP.md](mdc:docs/TESTING_ROADMAP.md)
+
+1. **Test Status Tables**:
+   - Update the status column for the relevant component (🔄 Partial or ✅ Complete)
+   - Add any new test files to the appropriate table
+
+2. **Critical Test Cases**:
+   - Check off (`[x]`) test cases that have been implemented
+   - Add any new test cases that were identified during implementation
+
+3. **Progress Tracking**:
+   - Update the completion status of testing milestones
+   - Update the overall test coverage percentage if known
+
+4. **Testing Notes**:
+   - Add any important observations about test implementation
+   - Document any challenges or considerations for future testing
+
+### Be Specific and Accurate
+
+- Indicate exactly which tests were implemented
+- Use consistent formatting for status indicators:
+  - ✅ Complete
+  - 🔄 Partial
+  - ❌ Not Started
+- Include specific file names and test function names in your updates
+- Document any test fixtures or mocks that were created
+
+### Update [PROJECT_CONTEXT.md](mdc:docs/PROJECT_CONTEXT.md)
+
+Also update the "Testing Status" section in PROJECT_CONTEXT.md with:
+- The latest test coverage information
+- Any significant testing milestones reached
+- Updated count of tests by type (unit, integration, functional)
+
+### Final Step
+
+Update the "Last Updated" date at the bottom of both [TESTING_ROADMAP.md](mdc:docs/TESTING_ROADMAP.md) and [PROJECT_CONTEXT.md](mdc:docs/PROJECT_CONTEXT.md) to today's date.
+
+## Confirmation Requirement
+
+After updating documentation, briefly confirm which testing documentation was updated and summarize the changes made. 

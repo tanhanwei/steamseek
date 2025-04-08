@@ -1,0 +1,69 @@
+---
+description: Ensures DEVELOPMENT_ROADMAP.md and PROJECT_CONTEXT.md are updated when implementing or modifying features
+globs: 
+alwaysApply: false
+---
+# Feature Implementation Tracker
+
+Type: Agent Requested
+Description: Ensures [DEVELOPMENT_ROADMAP.md](mdc:docs/DEVELOPMENT_ROADMAP.md) and [PROJECT_CONTEXT.md](mdc:docs/PROJECT_CONTEXT.md) are updated when implementing or modifying features
+
+## Purpose
+
+This rule ensures that whenever features are implemented or modified, the DEVELOPMENT_ROADMAP.md and PROJECT_CONTEXT.md files are updated to reflect the current development status accurately.
+
+## Instructions for AI
+
+When implementing or modifying features, you MUST update the documentation to maintain an accurate record of development progress. Follow these specific instructions:
+
+### Updates Required in [DEVELOPMENT_ROADMAP.md](mdc:docs/DEVELOPMENT_ROADMAP.md)
+
+1. **Task Tracking**:
+   - Mark completed tasks with a checkmark (`- [x]`)
+   - Update the status of in-progress tasks
+   - Add any new tasks identified during implementation
+
+2. **Priority Updates**:
+   - Move tasks between priority sections if their urgency has changed
+   - Update estimated effort or timelines if they've changed
+
+3. **Technical Debt**:
+   - Update the "Technical Debt Tracking" table if:
+     - New technical debt was introduced (add an entry)
+     - Existing debt was addressed (update status)
+     - Debt priority changed (update priority)
+
+4. **Dependencies and Blockers**:
+   - Update the dependencies section if implementation revealed new dependencies
+   - Remove blockers that have been resolved
+
+### Updates Required in [PROJECT_CONTEXT.md](mdc:docs/PROJECT_CONTEXT.md)
+
+1. **Current Development Status**:
+   - Update the status for relevant components in the table
+   - Change status indicators as appropriate (✅ Complete, 🔄 In Progress, ⚠️ Needs Improvement)
+
+2. **Recent Changes**:
+   - Add a bullet point describing the feature implementation
+   - Be specific about what was added or modified
+
+3. **Technical Debt**:
+   - Update this section if the implementation changed the technical debt situation
+
+4. **Current Development Priorities**:
+   - Update priorities if the implementation affects what should be done next
+
+### Be Thorough and Precise
+
+- Be specific about what was implemented and what remains to be done
+- Use consistent formatting and terminology
+- Maintain the document structure and style
+- Focus updates on facts rather than opinions
+
+### Final Step
+
+Update the "Last Updated" date at the bottom of both documents to today's date.
+
+## Confirmation Requirement
+
+After updating documentation, briefly confirm which documents were updated and summarize the key changes made. 

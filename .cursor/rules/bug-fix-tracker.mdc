@@ -1,0 +1,70 @@
+---
+description: Ensures LLM_CHALLENGES.md and PROJECT_CONTEXT.md are updated when fixing bugs to document lessons learned
+globs: 
+alwaysApply: false
+---
+# Bug Fix Tracker
+
+Type: Agent Requested
+Description: Ensures LLM_CHALLENGES.md and PROJECT_CONTEXT.md are updated when fixing bugs to document lessons learned
+
+## Purpose
+
+This rule ensures that whenever bugs are fixed, the relevant documentation is updated to capture the nature of the bug, the solution, and any lessons learned that could prevent similar issues in the future.
+
+## Instructions for AI
+
+When fixing bugs, you MUST update the documentation to maintain a knowledge base of common issues and their solutions. Follow these specific instructions:
+
+### Updates Required in [LLM_CHALLENGES.md](mdc:docs/LLM_CHALLENGES.md)
+
+If the bug was related to LLM-generated code or limitations:
+
+1. **Add to Specific Project Challenges**:
+   - If this is a new type of challenge, add a new section
+   - If similar to existing challenges, update the existing section with this example
+   - Include:
+     - Clear description of the bug
+     - Why it occurred in the context of LLM code generation
+     - How it was fixed
+     - How to prevent similar issues in the future
+
+2. **Update Strategies**:
+   - Add any new strategies discovered while fixing the bug
+   - Include concrete examples based on the bug fix
+
+### Updates Required in [PROJECT_CONTEXT.md](mdc:docs/PROJECT_CONTEXT.md)
+
+1. **Technical Debt**:
+   - If the bug fix addressed technical debt, update this section
+   - If the fix revealed new technical debt, add it to the list
+
+2. **Recent Changes**:
+   - Add a brief description of the bug fix
+   - Note any significant code changes made
+
+3. **Known LLM Challenges**:
+   - Update this section if the bug was related to LLM limitations
+
+### Consider Test Documentation
+
+If the bug fix included adding tests:
+
+1. Update [TESTING_ROADMAP.md](mdc:docs/TESTING_ROADMAP.md):
+   - Add the test case to the appropriate section
+   - Update test coverage information
+
+### Be Specific and Instructive
+
+- Focus on the root cause, not just symptoms
+- Explain the solution in a way that helps prevent similar bugs
+- Include specific code patterns to avoid or follow
+- Reference file names and functions that were affected
+
+### Final Step
+
+Update the "Last Updated" date at the bottom of all modified documents to today's date.
+
+## Confirmation Requirement
+
+After updating documentation, briefly summarize which files were updated and what valuable information was added about the bug fix. 

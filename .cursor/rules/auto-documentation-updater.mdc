@@ -1,0 +1,61 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Documentation Auto-Update Rule
+
+## Purpose
+
+This rule ensures that all project documentation files are automatically updated whenever you make changes to the codebase using Cursor Agents. This maintains accurate and up-to-date documentation without manual intervention.
+
+## Instructions for AI
+
+
+After completing your primary task (implementing features, fixing bugs, adding tests, etc.), you MUST update all relevant documentation files to reflect the changes. Follow these specific instructions:
+
+### 1. Update [PROJECT_CONTEXT.md](mdc:docs/PROJECT_CONTEXT.md)
+- Update the "Current Development Status" section
+- Update the "Recent Changes" section with a brief description of what was changed
+- Update the "Testing Status" if tests were added or modified
+- Update any other relevant sections
+- Update the "Last Updated" date at the bottom
+
+### 2. Update [TESTING_ROADMAP.md](mdc:docs/TESTING_ROADMAP.md)
+If your changes involve tests:
+- Update the checkboxes in the "Critical Test Cases" section
+- Update the status indicators in the component tables
+- Add any new test requirements that arise from your changes
+- Update the "Last Updated" date at the bottom
+
+### 3. Update [DEVELOPMENT_ROADMAP.md](mdc:docs/DEVELOPMENT_ROADMAP.md)
+- Check off completed tasks
+- Update the status of ongoing tasks
+- Move tasks between priority sections if appropriate
+- Update the "Technical Debt Tracking" table if debt was added or resolved
+- Update the "Last Updated" date at the bottom
+
+### 4. Update [LLM_CHALLENGES.md](mdc:docs/LLM_CHALLENGES.md)
+If any challenges or effective strategies were discovered during implementation:
+- Add them to the appropriate section
+- Include concrete examples
+- Update the "Last Updated" date at the bottom
+
+### Documentation Update Process
+
+1. Always read the current content of documentation files before updating them
+2. Make targeted, precise edits to the relevant sections
+3. Keep the same formatting and style as the existing content
+4. Use checkmarks (✅), warning signs (⚠️), or other existing indicators consistently
+5. Include today's date in the "Last Updated" field at the bottom of each file you modify
+
+### Important Notes
+
+- If a feature implementation spans multiple files or components, include all relevant details in the documentation
+- Documentation updates should be factual and objective, based on the actual changes made
+- Include enough detail that someone reading the documentation would understand what changed and why
+- Never overwrite the entire file; only update the relevant sections
+
+## Confirmation Requirement
+
+After updating documentation, briefly summarize which files were updated and what changes were made to each one. This should be a short bullet list at the end of your response. 
