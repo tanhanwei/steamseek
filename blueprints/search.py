@@ -142,7 +142,14 @@ def perform_search(query, selected_genre="All", selected_year="All", selected_pl
     # 1. Get initial semantic search results using the actual search query
     initial_top_k = 50
     limit_for_reranking = 50 # Changed from 25 to 50 games for re-ranking
-    raw_results = semantic_search_query(actual_search_query, top_k=initial_top_k)
+    raw_results = []
+    try:
+        raw_results = semantic_search_query(actual_search_query, top_k=initial_top_k)
+    except Exception as e:
+        error_msg = f"Error during semantic search: {str(e)}"
+        current_app.logger.error(error_msg)
+        print(error_msg)
+        return [], optimization_explanation
 
     if not raw_results:
         current_app.logger.info("Semantic search returned no results.") # DEBUG
@@ -331,7 +338,14 @@ def perform_search(query, selected_genre="All", selected_year="All", selected_pl
         if not is_free:
             price_overview = game_data.get("store_data", {}).get("price_overview", {})
             if price_overview: 
-                price = price_overview.get("final", 0) / 100.0
+                try:
+                    price_value = price_overview.get("final", 0)
+                    if isinstance(price_value, (int, float)):
+                        price = price_value / 100.0
+                    else:
+                        current_app.logger.warning(f"Invalid price value for appid {appid}: {price_value}")
+                except Exception as e:
+                    current_app.logger.error(f"Error calculating price for appid {appid}: {e}")
 
         # --- Apply Filters ---
         if selected_genre != "All" and selected_genre not in genres: 
@@ -412,19 +426,92 @@ def deep_search_background_task(query, search_params):
     deep_search_status["session_id"] = session_id
     deep_search_status["original_query"] = original_query  # Make sure to set this explicitly
     
-    # This function will be implemented later with the actual task processing code
-    # For now, just simulate progress
+    print(f"\n==== STARTING DEEP SEARCH FOR: '{original_query}' (Session: {session_id}) ====\n")
+    
     try:
-        print(f"\n==== STARTING DEEP SEARCH FOR: '{original_query}' (Session: {session_id}) ====\n")
-        deep_search_status["current_step"] = "Placeholder deep search processing"
+        # Step 1: Generate search variations using LLM
+        deep_search_status["current_step"] = "Generating search variations"
+        deep_search_status["progress"] = 10
+        variations = deep_search_generate_variations(original_query)
+        
+        # Set total steps based on number of variations
+        total_steps = len(variations) + 2  # variations + summarization + finalization
+        deep_search_status["total_steps"] = total_steps
+        
+        # Step 2: Execute searches for each variation
+        all_results = []
+        
+        for i, variation in enumerate(variations):
+            progress_pct = 10 + int((i / len(variations)) * 60)  # Progress from 10% to 70%
+            deep_search_status["progress"] = progress_pct
+            deep_search_status["current_step"] = f"Searching variation {i+1}/{len(variations)}: '{variation}'"
+            
+            # Execute search for this variation, but don't save to status
+            results, _ = perform_search(
+                variation,
+                search_params.get("genre", "All"),
+                search_params.get("year", "All"),
+                search_params.get("platform", "All"),
+                search_params.get("price", "All"),
+                "Relevance",  # Always sort by relevance for deep search
+                False,  # Don't use AI enhancement for variations
+                False,  # Not a deep search (prevents recursion)
+                False,  # Don't save to status
+                None   # Use default limit
+            )
+            
+            # Add these results to our collection
+            all_results.extend(results)
+        
+        # Step 3: Deduplicate results based on appid
+        seen_appids = set()
+        unique_results = []
+        
+        for result in all_results:
+            appid = result.get("appid")
+            if appid not in seen_appids:
+                seen_appids.add(appid)
+                unique_results.append(result)
+        
+        # Step 4: Generate a summary and final ranking
+        deep_search_status["progress"] = 80
+        deep_search_status["current_step"] = "Generating final summary and ranking"
+        
+        ranked_appids, grand_summary = deep_search_generate_summary(original_query, unique_results)
+        
+        # Step 5: Sort the unique results according to the ranked_appids
+        ranked_results = []
+        ranked_appids_set = set(ranked_appids)
+        
+        # First add the results that are in the ranked list, in order
+        for appid in ranked_appids:
+            for result in unique_results:
+                if result.get("appid") == appid:
+                    ranked_results.append(result)
+                    break
+        
+        # Then add any remaining results that weren't in the ranked list
+        for result in unique_results:
+            if result.get("appid") not in ranked_appids_set:
+                ranked_results.append(result)
+        
+        # Final step: Update the status with all our results
         deep_search_status["progress"] = 100
+        deep_search_status["current_step"] = "Complete"
+        deep_search_status["results"] = ranked_results
+        deep_search_status["grand_summary"] = grand_summary
         deep_search_status["completed"] = True
         deep_search_status["active"] = False
-        deep_search_status["results"] = []
-        deep_search_status["grand_summary"] = "Deep search implementation will be completed in the next step"
+        
     except Exception as e:
+        # Log the error and update status
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"ERROR in deep search: {e}\n{error_details}")
+        
         deep_search_status["error"] = str(e)
         deep_search_status["progress"] = 100
+        deep_search_status["current_step"] = f"Error: {str(e)}"
         deep_search_status["completed"] = True
         deep_search_status["active"] = False
 
